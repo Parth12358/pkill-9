@@ -53,6 +53,25 @@ On death the body auto-posts an obituary tweet with **no approval gate** (team d
 
 If `obituary` is missing, the body tweets `speech` instead. The body strips links and @mentions and caps it at 280 characters either way.
 
+## 6. It can see the screen now (new fields)
+
+Each turn the body sends two extra fields:
+
+- `front_app`: the app in front, e.g. `"Terminal"`.
+- `screen`: one sentence from a vision model, e.g. `"typing 'kill 4821' in Terminal"`.
+
+There's also a new event, `screen_threat`, which fires when the body sees someone trying to kill it. Please add both fields to `build_user_message`, e.g. `YOU CAN SEE: {screen} (app in front: {front_app})`. Treat `screen_threat` like `sigint` on the escalation ladder. This is the "I can SEE what you're typing" moment.
+
+## 7. Use OpenRouter for DeepSeek
+
+Kartikey's DeepSeek account has no credit. Point the `deepseek` backend at OpenRouter instead:
+
+- URL: `https://openrouter.ai/api/v1/chat/completions`
+- Key: `OPENROUTER_API_KEY`
+- Model: `deepseek/deepseek-v4.1-flash`
+
+The body uses the same key for its eyes. The team budget is under $15/day of LLM credits.
+
 ---
 
 ## Team call needed: the `jump` tool
