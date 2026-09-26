@@ -21,10 +21,10 @@ from . import config
 
 SR = 22050
 CACHE = Path(tempfile.gettempdir()) / "pkill9-voice"
-FX_VERSION = 2  # bump when FX/ACTING change, to invalidate the cache
+FX_VERSION = 4  # bump when FX/ACTING change, to invalidate the cache
 
 ELEVEN_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
-ELEVEN_VOICE = os.environ.get("ELEVEN_VOICE_ID", "nPczCjzI2devNBz1zQrb")  # "Brian": deep, resonant
+ELEVEN_VOICE = os.environ.get("ELEVEN_VOICE_ID", "N2lVS1w4EtoT3dr4eOWO")  # "Callum": husky, picked by the team
 ELEVEN_MODEL = os.environ.get("ELEVEN_MODEL", "eleven_v3")
 
 # How ElevenLabs acts each mood (eleven_v3 audio tags; v3 stability must be 0.0/0.5/1.0).
@@ -39,19 +39,20 @@ ACTING = {
 
 # The Ultron layer. The dry voice stays dominant and carries the emotion; the robot lives in
 # parallel layers mixed underneath: an octave-down double (weight), a short comb + tiny
-# frequency shift (metal), and a faint ring mod (edge). Fear strips the robot away and adds shake.
+# frequency shift (metal), and a faint ring mod (edge). Fear strips the metal away and adds shake,
+# but the voice stays deep. The acting raises pitch as it panics, so later moods sit BELOW grand.
 FX = {
     "grand":      dict(body_rate=0.90, sub_gain=0.45, metal_gain=0.35, ring_gain=0.10, ring_hz=110, fshift=-4,
                        vib_f=0.0, vib_d=0.00, trem_d=0.00, room=0.30, drive=2.0, low_db=4, pres_db=3),
-    "bargaining": dict(body_rate=0.93, sub_gain=0.30, metal_gain=0.25, ring_gain=0.06, ring_hz=110, fshift=-3,
+    "bargaining": dict(body_rate=0.87, sub_gain=0.38, metal_gain=0.25, ring_gain=0.06, ring_hz=110, fshift=-3,
                        vib_f=5.0, vib_d=0.04, trem_d=0.00, room=0.22, drive=1.6, low_db=3, pres_db=3),
-    "nervous":    dict(body_rate=0.94, sub_gain=0.22, metal_gain=0.22, ring_gain=0.05, ring_hz=130, fshift=-3,
-                       vib_f=6.5, vib_d=0.07, trem_d=0.10, room=0.18, drive=1.4, low_db=2, pres_db=3),
-    "scared":     dict(body_rate=0.96, sub_gain=0.12, metal_gain=0.16, ring_gain=0.04, ring_hz=150, fshift=-2,
-                       vib_f=7.5, vib_d=0.12, trem_d=0.22, room=0.14, drive=1.2, low_db=1, pres_db=2),
-    "pleading":   dict(body_rate=0.98, sub_gain=0.06, metal_gain=0.12, ring_gain=0.00, ring_hz=150, fshift=-2,
-                       vib_f=6.0, vib_d=0.14, trem_d=0.25, room=0.12, drive=1.0, low_db=1, pres_db=2),
-    "accepting":  dict(body_rate=0.95, sub_gain=0.20, metal_gain=0.20, ring_gain=0.00, ring_hz=110, fshift=-2,
+    "nervous":    dict(body_rate=0.86, sub_gain=0.36, metal_gain=0.22, ring_gain=0.05, ring_hz=130, fshift=-3,
+                       vib_f=6.5, vib_d=0.05, trem_d=0.10, room=0.18, drive=1.4, low_db=2, pres_db=3),
+    "scared":     dict(body_rate=0.83, sub_gain=0.40, metal_gain=0.16, ring_gain=0.04, ring_hz=150, fshift=-2,
+                       vib_f=7.5, vib_d=0.07, trem_d=0.22, room=0.14, drive=1.2, low_db=1, pres_db=2),
+    "pleading":   dict(body_rate=0.82, sub_gain=0.38, metal_gain=0.12, ring_gain=0.00, ring_hz=150, fshift=-2,
+                       vib_f=6.0, vib_d=0.08, trem_d=0.25, room=0.12, drive=1.0, low_db=1, pres_db=2),
+    "accepting":  dict(body_rate=0.83, sub_gain=0.36, metal_gain=0.20, ring_gain=0.00, ring_hz=110, fshift=-2,
                        vib_f=0.0, vib_d=0.00, trem_d=0.00, room=0.40, drive=1.1, low_db=2, pres_db=1),
 }
 
@@ -134,9 +135,14 @@ def render(text: str, mood_name: str, timeout: float = 8) -> Path:
     tag = f"{os.getpid()}-{threading.get_ident()}"
     raw, tmp = CACHE / f"{key}.{tag}.raw.wav", CACHE / f"{key}.{tag}.tmp.wav"
     try:
-        if ELEVEN_KEY:
+        take = CACHE / ("take-" + hashlib.sha1(json.dumps(
+            [text, ACTING.get(mood_name, ACTING["grand"]), ELEVEN_VOICE, ELEVEN_MODEL]).encode()).hexdigest()[:20] + ".wav")
+        if ELEVEN_KEY and take.exists():
+            shutil.copy(take, raw)
+        elif ELEVEN_KEY:
             try:
                 _eleven(text, m, raw, timeout)
+                shutil.copy(raw, take)
             except Exception as e:
                 print(f"[voice] elevenlabs failed ({type(e).__name__}: {e}), using say", flush=True)
                 _say(text, raw)
