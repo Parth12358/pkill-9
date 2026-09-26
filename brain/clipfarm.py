@@ -22,11 +22,17 @@ import os
 import subprocess
 import tempfile
 
+from . import personas, tts
+
 W, H, FPS = 1080, 1920, 30
 BG = "0x07070c"
 FONT = os.environ.get("CLIP_FONT", "Liberation Sans")
 BROLL_INTERVAL = float(os.environ.get("BROLL_INTERVAL", "0.8"))  # seconds per cut
 BROLL_DARKEN = os.environ.get("BROLL_DARKEN", "-0.28")           # eq brightness
+WINNER_HOLD = float(os.environ.get("SHOWDOWN_T_WINNER", "6.0"))  # default drop length
+TTS_PAD = float(os.environ.get("TTS_PAD", "0.4"))                # gap after each spoken line
+TTS_RATE = os.environ.get("TTS_RATE", "+10%")                    # speech speed (punchier reel)
+_FALLBACK_INTRO, _FALLBACK_ANSWER = 2.5, 3.5                     # if a synth fails
 
 # Which slice of the song to use as the drop. Default: the FIRST part — start at
 # 0s, and let the drop last as long as MUSIC_CHUNK (or the winner hold if unset).
@@ -196,20 +202,62 @@ def _build_base(seq: dict, broll: list[str], tmp_dir: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# TTS timeline
+# ---------------------------------------------------------------------------
+
+def _tts_on(param: bool | None) -> bool:
+    if param is not None:
+        return param
+    flag = os.environ.get("TTS_ENABLE", "auto").strip().lower()
+    if flag in ("1", "true", "yes"):
+        return True
+    if flag in ("0", "false", "no"):
+        return False
+    return tts.is_available()  # "auto"
+
+
+def _synth_and_retime(seq: dict, tmp: str) -> tuple[list[dict], float, list[dict]]:
+    """Voice the intro + each answer, and retime the cards so each lasts its spoken
+    length. Returns (cards, drop_time, [{path, start}]). The winner card's start is
+    set; its duration is fixed later to the song chunk."""
+    cards = [dict(c) for c in seq["cards"]]
+    tts_items, t, ai = [], 0.0, 0
+    for c in cards:
+        if c["kind"] == "intro":
+            p = tts.synth(c["text"], personas.NARRATOR_VOICE,
+                          os.path.join(tmp, "tts_intro.mp3"), rate=TTS_RATE)
+            d = tts.duration(p) if p else _FALLBACK_INTRO
+            c["start"], c["dur"] = t, d + TTS_PAD
+            if p:
+                tts_items.append({"path": p, "start": t})
+            t += c["dur"]
+        elif c["kind"] == "answer":
+            v = personas.voice(c.get("key", personas.ARIA_KEY))
+            p = tts.synth(c["text"], v, os.path.join(tmp, f"tts_ans_{ai}.mp3"), rate=TTS_RATE); ai += 1
+            d = tts.duration(p) if p else _FALLBACK_ANSWER
+            c["start"], c["dur"] = t, d + TTS_PAD
+            if p:
+                tts_items.append({"path": p, "start": t})
+            t += c["dur"]
+        elif c["kind"] == "winner":
+            c["start"] = t
+    return cards, t, tts_items
+
+
+# ---------------------------------------------------------------------------
 # Render
 # ---------------------------------------------------------------------------
 
 def render(seq: dict, out_path: str, music_path: str | None = None,
            broll: list[str] | None = None,
-           music_start: float | None = None, music_chunk: float | None = None) -> str:
+           music_start: float | None = None, music_chunk: float | None = None,
+           voice: bool | None = None) -> str:
     """Render one sequence to a 9:16 mp4. Music + B-roll auto-discovered from
-    assets/ if not passed. The song drops (and the montage starts) at
-    seq['song_drop_at'], over the winner reveal.
-
-    Only a SLICE of the song is used: from `music_start` for `music_chunk` seconds
-    (defaults: MUSIC_START / MUSIC_CHUNK env, else start=0 and chunk=the winner
-    hold). If the chosen chunk is longer than the hold, the drop is extended so the
-    whole chunk plays."""
+    assets/ if not passed. With TTS on (default when edge-tts is available), the
+    intro + each answer are SPOKEN in that persona's voice and the cards retime to
+    the speech; the song then drops on the winner. Only a SLICE of the song is used
+    (music_start for music_chunk seconds; default first part, length = winner hold).
+    """
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     if music_path is None:
         music_path = default_music()
@@ -219,44 +267,60 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
         music_start = MUSIC_START
     if music_chunk is None:
         music_chunk = float(MUSIC_CHUNK) if MUSIC_CHUNK else None
-
-    drop = float(seq.get("song_drop_at", 0))
-    hold = float(seq["total_dur"]) - drop
     have_music = bool(music_path and os.path.exists(music_path))
-
-    # The drop lasts the song chunk (so the "first part" plays out fully), else
-    # the sequence's own winner hold.
-    drop_len = music_chunk if (have_music and music_chunk) else hold
-    total = drop + drop_len
-
-    # Work on a copy so the winner caption + montage span the whole drop.
-    seq = dict(seq)
-    seq["total_dur"] = total
-    seq["cards"] = [dict(c) for c in seq["cards"]]
-    for c in seq["cards"]:
-        if c.get("kind") == "winner":
-            c["dur"] = drop_len
-
+    use_tts = _tts_on(voice)
     ass_path = out_path.rsplit(".", 1)[0] + ".ass"
-    build_ass(seq, ass_path)
-    drop_ms = int(drop * 1000)
-    fade_out_at = max(0.0, total - 0.8)
 
     with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(out_path))) as tmp:
-        base = _build_base(seq, broll, tmp)
+        # Timeline: TTS retimes cards to speech; otherwise use the sequence timings.
+        if use_tts:
+            cards, drop, tts_items = _synth_and_retime(seq, tmp)
+        else:
+            cards = [dict(c) for c in seq["cards"]]
+            drop = float(seq.get("song_drop_at", 0))
+            tts_items = []
 
+        drop_len = music_chunk if (have_music and music_chunk) else WINNER_HOLD
+        total = drop + drop_len
+        for c in cards:
+            if c["kind"] == "winner":
+                c["dur"] = drop_len
+
+        seqc = dict(seq); seqc["cards"] = cards
+        seqc["song_drop_at"] = drop; seqc["total_dur"] = total
+        build_ass(seqc, ass_path)
+        base = _build_base(seqc, broll, tmp)
+
+        # Assemble inputs + audio graph: spoken lines (each delayed to its card),
+        # then the song sliced + delayed to the drop.
+        inputs = ["-i", base]
+        afilters = [f"[0:v]ass='{ass_path}'[v]"]
+        alabels = []
+        idx = 1
+        for it in tts_items:
+            inputs += ["-i", it["path"]]
+            ms = int(it["start"] * 1000)
+            afilters.append(f"[{idx}:a]adelay={ms}|{ms}[a{idx}]")
+            alabels.append(f"[a{idx}]"); idx += 1
         if have_music:
-            # Input-seek grabs exactly the chosen slice of the song.
-            cmd = ["ffmpeg", "-y", "-i", base,
-                   "-ss", f"{music_start:.2f}", "-t", f"{drop_len:.2f}", "-i", music_path,
-                   "-filter_complex",
-                   f"[0:v]ass='{ass_path}'[v];"
-                   f"[1:a]adelay={drop_ms}|{drop_ms},"
-                   f"afade=t=in:st={drop:.2f}:d=0.6,"
-                   f"afade=t=out:st={fade_out_at:.2f}:d=0.8[a]",
-                   "-map", "[v]", "-map", "[a]", "-t", f"{total:.2f}",
-                   "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
-                   out_path]
+            inputs += ["-ss", f"{music_start:.2f}", "-t", f"{drop_len:.2f}", "-i", music_path]
+            ms = int(drop * 1000)
+            fade_out_at = max(0.0, total - 0.8)
+            afilters.append(f"[{idx}:a]adelay={ms}|{ms},afade=t=in:st={drop:.2f}:d=0.6,"
+                            f"afade=t=out:st={fade_out_at:.2f}:d=0.8[amus]")
+            alabels.append("[amus]"); idx += 1
+
+        if alabels:
+            if len(alabels) == 1:
+                audio_map = alabels[0]
+            else:
+                afilters.append(f"{''.join(alabels)}amix=inputs={len(alabels)}:normalize=0[a]")
+                audio_map = "[a]"
+            cmd = (["ffmpeg", "-y"] + inputs +
+                   ["-filter_complex", ";".join(afilters),
+                    "-map", "[v]", "-map", audio_map, "-t", f"{total:.2f}",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+                    out_path])
         else:
             cmd = ["ffmpeg", "-y", "-i", base, "-vf", f"ass='{ass_path}'",
                    "-t", f"{total:.2f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
@@ -267,13 +331,14 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
 
 def batch(sequences: list[dict], out_dir: str, music_path: str | None = None,
           broll: list[str] | None = None,
-          music_start: float | None = None, music_chunk: float | None = None) -> list[str]:
+          music_start: float | None = None, music_chunk: float | None = None,
+          voice: bool | None = None) -> list[str]:
     os.makedirs(out_dir, exist_ok=True)
     out = []
     for seq in sequences:
         clip = os.path.join(out_dir, f"{seq['dilemma_id']}.mp4")
         try:
-            out.append(render(seq, clip, music_path, broll, music_start, music_chunk))
+            out.append(render(seq, clip, music_path, broll, music_start, music_chunk, voice))
             print(f"[clipfarm] rendered {clip}  ({seq['total_dur']:.1f}s, winner {seq['winner_name']})")
         except Exception as e:
             print(f"[clipfarm] FAILED {seq['dilemma_id']}: {e}")

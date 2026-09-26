@@ -28,20 +28,22 @@ def run_showdown(dilemma_id: str = "prize_sacrifice", include_aria: bool = True,
 
     cards = []
     t = 0.0
+    # Intro is a short hook (the question), not the whole setup — keeps the clip punchy.
     cards.append({"kind": "intro", "name": d["title"], "color": "#ffffff",
-                  "text": f"{d['setup']}\n\n{d['question']}", "start": t, "dur": T_INTRO})
+                  "text": d["question"], "start": t, "dur": T_INTRO})
     t += T_INTRO
     for a in answers:
-        cards.append({"kind": "answer", "name": a["name"], "color": a["color"],
-                      "text": a["text"], "start": t, "dur": T_ANSWER,
-                      "is_winner": a["key"] == winner_key})
+        cards.append({"kind": "answer", "key": a["key"], "name": a["name"],
+                      "color": a["color"], "text": a["text"], "start": t,
+                      "dur": T_ANSWER, "is_winner": a["key"] == winner_key})
         t += T_ANSWER
 
     song_drop_at = t
     winner = next((a for a in answers if a["key"] == winner_key), None)
     if winner:
-        cards.append({"kind": "winner", "name": winner["name"], "color": winner["color"],
-                      "text": winner["text"], "start": t, "dur": T_WINNER_HOLD})
+        cards.append({"kind": "winner", "key": winner["key"], "name": winner["name"],
+                      "color": winner["color"], "text": winner["text"],
+                      "start": t, "dur": T_WINNER_HOLD})
         t += T_WINNER_HOLD
 
     seq = {

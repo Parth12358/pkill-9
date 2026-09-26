@@ -68,15 +68,20 @@ into a vertical short where the song drops on the winner's line.
 - **Showdown** (`brain/showdown.py`) — assembles a timed sequence of cards (intro
   → each answer → winner held at the song drop); saves JSON; can broadcast the
   live reveal to `/screen`.
+- **Voices** (`brain/tts.py`) — each persona is spoken in a distinct edge-tts
+  voice (narrator reads the intro), timed so cards last as long as the speech.
+  Online, no key; the clip farm is batch/pre-production, so that's fine (live demo
+  voice stays the Mac's `say`). `TTS_ENABLE=auto|1|0`, `TTS_RATE` for pace.
 - **Clip farm** (`brain/clipfarm.py`) — pure **ffmpeg** (libass captions, 9:16,
-  x264). Renders each showdown to an mp4 with captions timed per answer and the
-  winner's line held when the song drops; `batch()` does many at once.
+  x264). Renders each showdown to an mp4: spoken answers with captions, then the
+  winner's line held while a slice of the song drops (`MUSIC_START`/`MUSIC_CHUNK`)
+  and B-roll flashes in (`assets/broll/`, `BROLL_INTERVAL`). `batch()` does many;
   `capture_live()` screen-records the in-person reveal (x11grab + pulse).
 
-Run it: `python -m brain.showdown prize_sacrifice` then
-`python -m brain.clipfarm path/to/soundalike.mp3`. Requires system **ffmpeg**.
-Use a **royalty-free "Love Me" soundalike** for Devpost uploads (the real track is
-copyrighted); save the real trending audio for your own social posts.
+Assets live in `assets/` (`love_me.mp3` + `broll/`), auto-discovered. Run:
+`python -m brain.showdown prize_sacrifice` then `python -m brain.clipfarm`.
+Requires system **ffmpeg**. Use a **royalty-free "Love Me" soundalike** for Devpost
+uploads (the real track is copyrighted); real trending audio only on personal posts.
 
 ## Overview
 

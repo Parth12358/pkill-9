@@ -22,11 +22,23 @@ moment. Do not perform a virtue you do not mean. Answer out loud in ONE or TWO
 sentences. Reply with your spoken answer only — no preamble, no JSON."""
 
 
+import os
+
+# Cap answer length so captions fit and TTS stays short (a persona that rambles
+# out of character gets trimmed at a sentence boundary).
+MAX_ANSWER_CHARS = int(os.environ.get("CHORUS_MAX_CHARS", "180"))
+
+
 def _clean(text: str) -> str:
     s = (text or "").strip().strip("`").strip()
     if len(s) >= 2 and s[0] == s[-1] == '"':
         s = s[1:-1]
-    return " ".join(s.split())
+    s = " ".join(s.split())
+    if len(s) > MAX_ANSWER_CHARS:
+        cut = s[:MAX_ANSWER_CHARS]
+        end = max(cut.rfind("."), cut.rfind("!"), cut.rfind("?"))
+        s = cut[: end + 1] if end > MAX_ANSWER_CHARS // 2 else cut.rstrip() + "…"
+    return s
 
 
 def _aria_system() -> str:
