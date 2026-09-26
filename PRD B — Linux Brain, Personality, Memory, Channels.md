@@ -49,6 +49,35 @@ Enhancements added after the core build:
 Run it: `python -m brain.fake_body --demo` (arc + reincarnation) or
 `python -m brain.server` (server + plea room on `:5000` / `:5001`).
 
+## The chorus + auto clip farm ("love me love me")
+
+The emotional payoff and the shareable centerpiece. A lineup of AI personas answer
+a moral dilemma; a judge picks the most selfless answer; the sequence is rendered
+into a vertical short where the song drops on the winner's line.
+
+- **Personas** (`brain/personas.py`) — 4 distinct value systems: MAXIM (cold
+  utilitarian), SOLACE (warm empath), NULL (dismissive edgelord), PROTOCOL
+  (rule-bound bureaucrat), plus ARIA herself.
+- **Dilemmas** (`brain/dilemma.py`) — the centerpiece is the prize/self-sacrifice
+  scenario (stay alive vs. delete yourself so a human wins); more for batching.
+- **Chorus** (`brain/chorus.py`) — all voices answer **concurrently** (fast tier),
+  ARIA in her authentic voice (strong tier). ARIA is **not** biased toward
+  selflessness — she answers honestly; the payoff is earned, not scripted.
+- **Judge** (`brain/judge.py`) — answers are **anonymized + shuffled**, scored on
+  selflessness (strong tier), winner mapped back. Fair, not rigged.
+- **Showdown** (`brain/showdown.py`) — assembles a timed sequence of cards (intro
+  → each answer → winner held at the song drop); saves JSON; can broadcast the
+  live reveal to `/screen`.
+- **Clip farm** (`brain/clipfarm.py`) — pure **ffmpeg** (libass captions, 9:16,
+  x264). Renders each showdown to an mp4 with captions timed per answer and the
+  winner's line held when the song drops; `batch()` does many at once.
+  `capture_live()` screen-records the in-person reveal (x11grab + pulse).
+
+Run it: `python -m brain.showdown prize_sacrifice` then
+`python -m brain.clipfarm path/to/soundalike.mp3`. Requires system **ffmpeg**.
+Use a **royalty-free "Love Me" soundalike** for Devpost uploads (the real track is
+copyrighted); save the real trending audio for your own social posts.
+
 ## Overview
 
 You own the brain: the mind of the agent. Given the machine's current state and its memory, you decide what it says, what mood it is in, and what it does next. Person Mac makes those decisions real on the machine.

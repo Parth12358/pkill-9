@@ -29,7 +29,8 @@ _client = None
 
 
 def is_configured() -> bool:
-    return os.environ.get("WHATSAPP_ENABLE", "").strip() in ("1", "true", "yes")
+    # On by default; set WHATSAPP_ENABLE=0 to turn it off.
+    return os.environ.get("WHATSAPP_ENABLE", "1").strip() in ("1", "true", "yes")
 
 
 def _session_path() -> str:
