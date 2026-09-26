@@ -23,3 +23,18 @@ Brain -> Body, every turn:
 - `wants_approval`: hold the action until a teammate presses the approve key
 
 The body refuses and logs any action not on the list.
+
+## Transport
+
+The brain runs an HTTP server (default port 8765). Each turn the body sends:
+
+```
+POST {BRAIN_URL}/turn     body: the body->brain JSON     reply: the brain->body JSON
+```
+
+- Body timeout is 4s. On a timeout, an error, or bad JSON, the body speaks a canned line. The brain can never stall the body.
+- A missing `wants_approval` is treated as `true`. Tweets are always gated, no matter what the brain says.
+- `last_words` is never gated, because dying can't wait for a keypress. On a kill signal the body runs one final turn. If that reply's action is `last_words`, the body uses its `action_args`: `text`, `will`, `epitaph`.
+- `life` is kept by the body in `scratch/.life`, which goes up by one on every start.
+- `chat_messages` comes from the body as `[]`. The plea room lives in the brain server, so the brain fills this from its own queue before thinking.
+- File actions take `action_args.filename` + `text`. The body forces every filename to a `.txt` inside `scratch/`.
