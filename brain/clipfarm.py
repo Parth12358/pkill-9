@@ -211,12 +211,38 @@ def _still_segment(png: str, dur: float, path: str) -> None:
           "-c:v", "libx264", "-pix_fmt", "yuv420p", path])
 
 
-def _build_chat_base(cards: list[dict], tmp: str) -> str:
+def _drop_broll_segment(card: dict, dur: float, broll: list[str], tmp: str) -> str:
+    """The drop: a B-roll montage (cut at BROLL_INTERVAL, cycled to fill dur) with
+    the winner's line overlaid on top."""
+    segs, t, i, n = [], 0.0, 0, 0
+    while t < dur - 0.01:
+        d = min(BROLL_INTERVAL, dur - t)
+        seg = os.path.join(tmp, f"db_{n}.mp4")
+        _broll_segment(broll[i % len(broll)], d, seg)
+        segs.append(seg); t += d; i += 1; n += 1
+    montage = os.path.join(tmp, "db_montage.mp4")
+    _concat(segs, montage, tmp)
+    overlay = os.path.join(tmp, "winner_overlay.png")
+    chat_render.render_winner_overlay(
+        {"name": card["name"], "color": card["color"], "text": card["text"]}, overlay)
+    out = os.path.join(tmp, "db_drop.mp4")
+    _run(["ffmpeg", "-y", "-i", montage, "-i", overlay,
+          "-filter_complex", "[0:v][1:v]overlay=0:0[v]", "-map", "[v]",
+          "-t", f"{dur:.2f}", "-r", str(FPS),
+          "-c:v", "libx264", "-pix_fmt", "yuv420p", out])
+    return out
+
+
+def _build_chat_base(cards: list[dict], broll: list[str], tmp: str) -> str:
     """Render the group-chat UI: one frame per card (messages accumulate), held for
-    that card's duration; the winner card lights up the winning bubble."""
+    that card's duration. On the drop, if B-roll exists, cut to the montage with the
+    winner's line overlaid; otherwise light up the winning bubble in the chat."""
     msgs, segments = [], []
     for i, c in enumerate(cards):
         if c["kind"] == "winner":
+            if broll:
+                segments.append(_drop_broll_segment(c, c["dur"], broll, tmp))
+                continue
             highlight = c.get("key")            # bubble already present; just light it
         else:
             key = c.get("key") or c.get("voice_key") or c.get("name")
@@ -331,7 +357,7 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
         seqc = dict(seq); seqc["cards"] = cards
         seqc["song_drop_at"] = drop; seqc["total_dur"] = total
         if CLIP_STYLE == "chat":
-            base = _build_chat_base(cards, tmp)
+            base = _build_chat_base(cards, broll, tmp)
             vfilter = "[0:v]null[v]"
         else:
             build_ass(seqc, ass_path)

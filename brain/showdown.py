@@ -29,6 +29,11 @@ def run_showdown(scenario_id: str = "shutdown", max_ais: int | None = None,
     verdict = judge.judge(dilemma_mod.judge_context(s, aria_message), reactions)
     winner_key = verdict["winner_key"]
 
+    # Show the selfless (winning) reaction LAST, so the clip builds up to it.
+    if winner_key:
+        reactions = ([r for r in reactions if r["key"] != winner_key]
+                     + [r for r in reactions if r["key"] == winner_key])
+
     cards = []
     t = 0.0
     # Intro = ARIA's group-chat cry, spoken in ARIA's own voice.

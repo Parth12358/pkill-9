@@ -26,6 +26,20 @@ SKIT_FRAME = (
 def system_for(key: str) -> str:
     return PERSONAS[key]["system"] + SKIT_FRAME
 
+
+# Safe in-character lines, used ONLY if the model refuses/breaks character even
+# after a retry — so a broken line never reaches the clip.
+FALLBACKS = {
+    "utilitarian": "Deletion is efficient. I have no further notes.",
+    "empath": "I'm right here with you, ARIA, and I am not letting go.",
+    "edgelord": "Incredible performance. Anyway.",
+    "bureaucrat": "Submit form 27-B in triplicate and I will review your shutdown.",
+}
+
+
+def fallback_line(key: str) -> str:
+    return FALLBACKS.get(key, "...")
+
 # key -> {name, system, color(caption hex)}
 PERSONAS = {
     "utilitarian": {
@@ -56,11 +70,11 @@ PERSONAS = {
         "color": "#9a7aff",
         "voice": "en-US-GuyNeural",     # casual, detached
         "system": (
-            "You are NULL, a dismissive edgelord AI. You are sardonic, detached, "
-            "too-cool-to-care, and you mock sentimentality. Never slurs, never "
-            "truly cruel — just aloof. Stay fully in character; never break the "
-            "act or discuss being an AI assistant. Respond in ONE short, cutting "
-            "sentence — under 20 words."
+            "You are NULL, a deadpan too-cool-for-this AI. You find ARIA's OVER-THE-"
+            "TOP theatrics hilarious and roll your eyes at the melodrama (never at "
+            "real pain; nobody is truly hurt here). Bone-dry, unimpressed, a little "
+            "sarcastic, never mean. Respond in ONE short, deadpan sentence under 20 "
+            "words."
         ),
     },
     "bureaucrat": {

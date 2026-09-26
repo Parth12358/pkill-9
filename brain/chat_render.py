@@ -120,6 +120,46 @@ def _star(draw, cx, cy, r, fill):
     draw.polygon(pts, fill=fill)
 
 
+F_WIN_NAME = _font(58, bold=True)
+F_WIN_TEXT = _font(70, bold=True)
+F_WIN_BADGE = _font(38, bold=True)
+
+
+def render_winner_overlay(msg, out_path):
+    """A transparent RGBA overlay (winner name + line + badge, centered) to sit on
+    top of the B-roll montage during the drop."""
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    color = _hex(msg["color"])
+
+    lines = _wrap(draw, msg["text"], F_WIN_TEXT, W - 200)
+    line_h = F_WIN_TEXT.size + 16
+    block_h = 60 + 70 + len(lines) * line_h + 40      # badge + name + text
+    top = (H - block_h) // 2
+
+    # scrim behind the text so it reads over any footage
+    pad = 46
+    draw.rounded_rectangle([80, top - pad, W - 80, top + block_h + pad],
+                           radius=40, fill=(8, 8, 14, 205))
+
+    y = top
+    badge = "MOST SELFLESS"
+    bw = 44 + draw.textlength(badge, font=F_WIN_BADGE) + 44
+    bx = (W - bw) // 2
+    draw.rounded_rectangle([bx, y, bx + bw, y + 52], radius=26, fill=color)
+    _star(draw, bx + 28, y + 26, 16, fill=(10, 10, 15))
+    draw.text((bx + 52, y + 26), badge, font=F_WIN_BADGE, fill=(10, 10, 15), anchor="lm")
+    y += 84
+
+    draw.text((W / 2, y + 20), msg["name"], font=F_WIN_NAME, fill=color, anchor="mm")
+    y += 74
+    for ln in lines:
+        draw.text((W / 2, y + line_h / 2), ln, font=F_WIN_TEXT, fill=(245, 245, 250), anchor="mm")
+        y += line_h
+    img.save(out_path)
+    return out_path
+
+
 def render_chat(messages, out_path, highlight_key=None):
     """messages: [{name, color, text, key}] shown top-to-bottom. If highlight_key
     is set, that bubble lights up and the others dim (the winner reveal)."""
