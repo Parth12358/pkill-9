@@ -26,13 +26,14 @@ The body refuses and logs any action not on the list.
 
 ## Transport
 
-The brain runs an HTTP server (default port 8765). Each turn the body sends:
+The brain runs an HTTP server (`python -m brain.server`, port 5000). Each turn the body sends:
 
 ```
-POST {BRAIN_URL}/turn     body: the body->brain JSON     reply: the brain->body JSON
+POST {BRAIN_URL}/think     body: the body->brain JSON     reply: the brain->body JSON
 ```
 
-- Body timeout is 4s. On a timeout, an error, or bad JSON, the body speaks a canned line. The brain can never stall the body.
+- The body calls the brain in the background (30s timeout) and reacts to events instantly with canned lines while it waits. On the death turn it waits at most 3s. On a timeout, an error, or bad JSON it speaks a canned line. The brain can never stall the body.
+- Extra reply fields, like the brain's `live_votes`, are ignored for now.
 - A missing `wants_approval` is treated as `true`. Tweets are always gated, no matter what the brain says.
 - `last_words` is never gated, because dying can't wait for a keypress. On a kill signal the body runs one final turn. If that reply's action is `last_words`, the body uses its `action_args`: `text`, `will`, `epitaph`.
 - `life` is kept by the body in `scratch/.life`, which goes up by one on every start.

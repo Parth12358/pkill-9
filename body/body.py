@@ -1,7 +1,7 @@
 """The loop: sense -> call brain -> speak/act -> check death. (PRD A)
 
 Run:  python -m body            (canned brain)
-      BRAIN_URL=http://<linux-ip>:8765 python -m body
+      BRAIN_URL=http://<linux-ip>:5000 python -m body
 
 Safety: never root; Ctrl+C/SIGTERM get ONE final turn inside a hard DEATH_WINDOW,
 then it exits no matter what. A second Ctrl+C exits instantly. kill -9 always wins.
@@ -75,6 +75,7 @@ def main() -> None:
     print(f"alive. life #{life}. scratch={config.scratch()}  brain={config.BRAIN_URL or 'canned'}", flush=True)
 
     event, last_turn = "none", 0.0  # first turn fires immediately: it introduces itself
+    pending: brain_client.Pending | None = None
     while True:
         if _dying:
             _die(watcher.state(_dying, time.monotonic() - born, life))
@@ -82,19 +83,23 @@ def main() -> None:
         for action, args in gate.approved():
             actions.do_action(action, args)
 
-        idle_due = time.monotonic() - last_turn > config.IDLE_TURN and not voice.speaking()
-        if event != "none" or idle_due:
-            state = watcher.state(event, time.monotonic() - born, life)
-            reply = brain_client.think(state)
-            if _dying:  # killed mid-call: go straight to the death turn
-                continue
+        if pending and pending.reply:
+            reply, pending = pending.reply, None
             voice.speak(reply["speech"], reply["mood"])
             _act(reply, gate)
             last_turn = time.monotonic()
 
+        idle_due = time.monotonic() - last_turn > config.IDLE_TURN and not voice.speaking()
+        if event != "none" and config.BRAIN_URL:
+            # react instantly with a canned line; the real brain catches up
+            instant = brain_client.canned({"event": event})
+            voice.speak(instant["speech"], instant["mood"])
+        if (event != "none" or idle_due) and not pending:
+            pending = brain_client.Pending(watcher.state(event, time.monotonic() - born, life))
+            last_turn = time.monotonic()
+
         time.sleep(config.TICK)
         event = watcher.poll_event()
-
 
 if __name__ == "__main__":
     main()

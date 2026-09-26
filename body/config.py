@@ -6,7 +6,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 BRAIN_URL = os.environ.get("BRAIN_URL", "")          # empty = use the local canned brain
-BRAIN_TIMEOUT = float(os.environ.get("BRAIN_TIMEOUT", "4"))
+BRAIN_TIMEOUT = float(os.environ.get("BRAIN_TIMEOUT", "30"))  # runs in the background
 VOICE = os.environ.get("PKILL9_VOICE", "Daniel")
 MUTE = os.environ.get("PKILL9_MUTE") == "1"           # print instead of `say`
 TICK = 0.5                                             # seconds between sense polls

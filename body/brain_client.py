@@ -2,6 +2,7 @@
 demo never stalls when the brain is slow, down, or returns junk."""
 
 import random
+import threading
 
 from . import config
 from .actions import ALLOWED
@@ -37,12 +38,23 @@ def validate(reply) -> dict | None:
     }
 
 
+class Pending:
+    """One brain call running in the background, so a slow LLM never freezes the body."""
+
+    def __init__(self, state: dict) -> None:
+        self.reply: dict | None = None
+        threading.Thread(target=self._run, args=(state,), daemon=True).start()
+
+    def _run(self, state: dict) -> None:
+        self.reply = think(state)
+
+
 def think(state: dict, timeout: float | None = None) -> dict:
     if not config.BRAIN_URL:
         return canned(state)
     try:
         import requests
-        r = requests.post(config.BRAIN_URL.rstrip("/") + "/turn", json=state,
+        r = requests.post(config.BRAIN_URL.rstrip("/") + "/think", json=state,
                           timeout=timeout or config.BRAIN_TIMEOUT)
         return validate(r.json()) or canned(state)
     except Exception as e:
