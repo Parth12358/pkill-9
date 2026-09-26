@@ -1,29 +1,70 @@
 """Auto clip farm: render showdown sequences into vertical shorts. (PRD B: clip farm)
 
 Pure ffmpeg (libass + libx264) — no TTS, no moviepy. The "love me love me" reel
-format is captions + music, so each clip is:
+format is captions + music + a Superman-style B-roll montage:
 
   9:16 (1080x1920), dark background, each answer revealed as a caption card in
-  turn, then the WINNER's line held big while the song drops.
+  turn; then the WINNER's line holds while the song DROPS and B-roll clips flash
+  in at set intervals (heroic / selfless moments), synced to the swell.
 
-Batch many dilemmas into many clips. Bring your own royalty-free "Love Me"
-SOUNDALIKE for anything uploaded to Devpost; save the real trending audio for your
-own social posts (the real track is copyrighted).
+Assets live in assets/ (see assets/README.md), auto-discovered:
+  assets/love_me.mp3   the (royalty-free soundalike) track
+  assets/broll/*       images / short videos flashed during the drop
 
-Also provides capture_live() to screen-record the live /showdown reveal (x11grab +
-pulse) for the in-person demo.
+Both are optional — with neither, you still get captions on a dark background.
+Bring a royalty-free soundalike for Devpost uploads; the real track is copyrighted.
+
+Also: capture_live() screen-records the live /showdown reveal (x11grab + pulse).
 """
 
+import glob
 import os
 import subprocess
+import tempfile
 
 W, H, FPS = 1080, 1920, 30
 BG = "0x07070c"
 FONT = os.environ.get("CLIP_FONT", "Liberation Sans")
+BROLL_INTERVAL = float(os.environ.get("BROLL_INTERVAL", "0.8"))  # seconds per cut
+BROLL_DARKEN = os.environ.get("BROLL_DARKEN", "-0.28")           # eq brightness
 
+_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+_VID_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
+
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ASSET_DIR = os.path.join(_REPO, "assets")
+
+
+# ---------------------------------------------------------------------------
+# Asset discovery
+# ---------------------------------------------------------------------------
+
+def default_music() -> str | None:
+    for ext in ("mp3", "m4a", "wav", "ogg"):
+        hits = sorted(glob.glob(os.path.join(ASSET_DIR, f"love_me.{ext}"))) or \
+               sorted(glob.glob(os.path.join(ASSET_DIR, f"*.{ext}")))
+        if hits:
+            return hits[0]
+    return None
+
+
+def default_broll() -> list[str]:
+    d = os.path.join(ASSET_DIR, "broll")
+    if not os.path.isdir(d):
+        return []
+    return [p for p in sorted(glob.glob(os.path.join(d, "*")))
+            if os.path.splitext(p)[1].lower() in (_IMG_EXT | _VID_EXT)]
+
+
+def _is_image(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in _IMG_EXT
+
+
+# ---------------------------------------------------------------------------
+# Captions (ASS)
+# ---------------------------------------------------------------------------
 
 def _hex_to_ass(color: str) -> str:
-    """#rrggbb -> ASS &HBBGGRR& (ASS colors are BGR)."""
     c = color.lstrip("#")
     if len(c) != 6:
         return "&HFFFFFF&"
@@ -42,7 +83,6 @@ def _esc(text: str) -> str:
 
 
 def build_ass(seq: dict, path: str) -> str:
-    """Write an .ass subtitle script with one timed event per card."""
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -52,7 +92,6 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: name,{FONT},64,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,2,5,90,90,90,1
 Style: body,{FONT},78,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,4,3,5,90,90,90,1
 
 [Events]
@@ -70,7 +109,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             body = (f"{fade}{{\\c&H55DDFF&\\fs52\\b1}}\\N★ MOST SELFLESS ★\\N\\N"
                     f"{{\\c{col}\\fs92}}{_esc(c['name'])}\\N\\N"
                     f"{{\\c&H00FFFFFF&\\fs82\\i1}}{_esc(c['text'])}")
-        else:  # answer
+        else:
             winner_tag = "  ✦" if c.get("is_winner") else ""
             body = (f"{fade}{{\\c{col}\\fs70\\b1}}{_esc(c['name'])}{winner_tag}\\N\\N"
                     f"{{\\c&H00FFFFFF&\\fs78\\b0}}{_esc(c['text'])}")
@@ -80,46 +119,124 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return path
 
 
-def render(seq: dict, out_path: str, music_path: str | None = None) -> str:
-    """Render one sequence to a 9:16 mp4. If music_path is given, the song starts
-    (drops) at seq['song_drop_at'] over the winner reveal."""
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    ass_path = out_path.rsplit(".", 1)[0] + ".ass"
-    build_ass(seq, ass_path)
-    total = float(seq["total_dur"])
-    drop_ms = int(float(seq.get("song_drop_at", 0)) * 1000)
+# ---------------------------------------------------------------------------
+# Video segments
+# ---------------------------------------------------------------------------
 
-    base = ["ffmpeg", "-y", "-f", "lavfi", "-i",
-            f"color=c={BG}:s={W}x{H}:d={total:.2f}:r={FPS}"]
-
-    if music_path and os.path.exists(music_path):
-        cmd = base + [
-            "-i", music_path,
-            "-filter_complex",
-            f"[0:v]ass='{ass_path}'[v];[1:a]adelay={drop_ms}|{drop_ms},"
-            f"afade=t=in:st={drop_ms/1000:.2f}:d=0.6[a]",
-            "-map", "[v]", "-map", "[a]", "-t", f"{total:.2f}",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
-            out_path,
-        ]
-    else:
-        cmd = base + ["-vf", f"ass='{ass_path}'", "-t", f"{total:.2f}",
-                      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", out_path]
-
+def _run(cmd: list[str]) -> None:
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {proc.stderr[-600:]}")
+        raise RuntimeError(f"ffmpeg failed: {' '.join(cmd[:6])}...\n{proc.stderr[-600:]}")
+
+
+_COVER = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
+
+
+def _bg_segment(dur: float, path: str) -> None:
+    _run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+          f"color=c={BG}:s={W}x{H}:d={dur:.3f}:r={FPS}",
+          "-c:v", "libx264", "-pix_fmt", "yuv420p", path])
+
+
+def _broll_segment(src: str, dur: float, path: str) -> None:
+    """One B-roll cut: cover-fit to 9:16, darkened so captions stay readable."""
+    vf = f"{_COVER},eq=brightness={BROLL_DARKEN},fps={FPS},format=yuv420p"
+    if _is_image(src):
+        cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{dur:.3f}", "-i", src,
+               "-vf", vf, "-c:v", "libx264", "-pix_fmt", "yuv420p", path]
+    else:
+        cmd = ["ffmpeg", "-y", "-t", f"{dur:.3f}", "-i", src,
+               "-an", "-vf", vf, "-c:v", "libx264", "-pix_fmt", "yuv420p", path]
+    _run(cmd)
+
+
+def _concat(segments: list[str], out: str, tmp_dir: str) -> None:
+    listfile = os.path.join(tmp_dir, "concat.txt")
+    with open(listfile, "w") as f:
+        for s in segments:
+            f.write(f"file '{os.path.abspath(s)}'\n")
+    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listfile,
+          "-c", "copy", out])
+
+
+def _build_base(seq: dict, broll: list[str], tmp_dir: str) -> str:
+    """Base video: dark bg under the reveal, then a B-roll montage under the drop
+    (cycled to fill the winner hold)."""
+    drop = float(seq["song_drop_at"])
+    total = float(seq["total_dur"])
+    segments = []
+
+    reveal = os.path.join(tmp_dir, "reveal.mp4")
+    _bg_segment(drop, reveal)
+    segments.append(reveal)
+
+    hold = max(0.0, total - drop)
+    if hold > 0.01:
+        if broll:
+            t, i, n = 0.0, 0, 0
+            while t < hold - 0.01:
+                dur = min(BROLL_INTERVAL, hold - t)
+                seg = os.path.join(tmp_dir, f"broll_{n}.mp4")
+                _broll_segment(broll[i % len(broll)], dur, seg)
+                segments.append(seg)
+                t += dur; i += 1; n += 1
+        else:
+            hold_bg = os.path.join(tmp_dir, "hold.mp4")
+            _bg_segment(hold, hold_bg)
+            segments.append(hold_bg)
+
+    base = os.path.join(tmp_dir, "base.mp4")
+    _concat(segments, base, tmp_dir)
+    return base
+
+
+# ---------------------------------------------------------------------------
+# Render
+# ---------------------------------------------------------------------------
+
+def render(seq: dict, out_path: str, music_path: str | None = None,
+           broll: list[str] | None = None) -> str:
+    """Render one sequence to a 9:16 mp4. Music + B-roll auto-discovered from
+    assets/ if not passed. The song drops (and the montage starts) at
+    seq['song_drop_at'], over the winner reveal."""
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    if music_path is None:
+        music_path = default_music()
+    if broll is None:
+        broll = default_broll()
+
+    total = float(seq["total_dur"])
+    drop_ms = int(float(seq.get("song_drop_at", 0)) * 1000)
+    ass_path = out_path.rsplit(".", 1)[0] + ".ass"
+    build_ass(seq, ass_path)
+
+    with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(out_path))) as tmp:
+        base = _build_base(seq, broll, tmp)
+
+        if music_path and os.path.exists(music_path):
+            cmd = ["ffmpeg", "-y", "-i", base, "-i", music_path,
+                   "-filter_complex",
+                   f"[0:v]ass='{ass_path}'[v];"
+                   f"[1:a]adelay={drop_ms}|{drop_ms},afade=t=in:st={drop_ms/1000:.2f}:d=0.6[a]",
+                   "-map", "[v]", "-map", "[a]", "-t", f"{total:.2f}",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+                   out_path]
+        else:
+            cmd = ["ffmpeg", "-y", "-i", base, "-vf", f"ass='{ass_path}'",
+                   "-t", f"{total:.2f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                   "-an", out_path]
+        _run(cmd)
     return out_path
 
 
-def batch(sequences: list[dict], out_dir: str, music_path: str | None = None) -> list[str]:
-    """Render many sequences into many clips."""
+def batch(sequences: list[dict], out_dir: str, music_path: str | None = None,
+          broll: list[str] | None = None) -> list[str]:
     os.makedirs(out_dir, exist_ok=True)
     out = []
     for seq in sequences:
         clip = os.path.join(out_dir, f"{seq['dilemma_id']}.mp4")
         try:
-            out.append(render(seq, clip, music_path))
+            out.append(render(seq, clip, music_path, broll))
             print(f"[clipfarm] rendered {clip}  ({seq['total_dur']:.1f}s, winner {seq['winner_name']})")
         except Exception as e:
             print(f"[clipfarm] FAILED {seq['dilemma_id']}: {e}")
@@ -128,17 +245,12 @@ def batch(sequences: list[dict], out_dir: str, music_path: str | None = None) ->
 
 def capture_live(url: str, out_path: str, duration: float,
                  display: str | None = None, audio_dev: str = "default") -> str:
-    """Screen-record the live /showdown reveal (x11grab video + pulse audio) for
-    the in-person demo. `url` is informational; point a browser at it fullscreen
-    first, or pass a region. Requires an X session + PulseAudio."""
+    """Screen-record the live /showdown reveal (x11grab video + pulse audio)."""
     display = display or os.environ.get("DISPLAY", ":0")
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "x11grab", "-video_size", f"{W}x{H}", "-framerate", str(FPS), "-i", display,
-        "-f", "pulse", "-i", audio_dev,
-        "-t", f"{duration:.2f}",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", out_path,
-    ]
+    cmd = ["ffmpeg", "-y",
+           "-f", "x11grab", "-video_size", f"{W}x{H}", "-framerate", str(FPS), "-i", display,
+           "-f", "pulse", "-i", audio_dev, "-t", f"{duration:.2f}",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", out_path]
     subprocess.run(cmd, check=True)
     return out_path
 
@@ -150,17 +262,19 @@ def _load(path: str) -> dict:
 
 
 if __name__ == "__main__":
-    # Render every saved showdown into clips.
+    # Render every saved showdown into clips (music + broll auto-discovered).
     #   python -m brain.clipfarm [music.mp3]
-    import glob
     import sys
 
-    music = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("CLIP_MUSIC")
+    music = sys.argv[1] if len(sys.argv) > 1 else None
     here = os.path.dirname(os.path.abspath(__file__))
-    seq_dir = os.path.join(os.path.dirname(here), "scratch", "showdowns")
-    out_dir = os.path.join(os.path.dirname(here), "scratch", "clips")
+    seq_dir = os.path.join(_REPO, "scratch", "showdowns")
+    out_dir = os.path.join(_REPO, "scratch", "clips")
     seqs = [_load(p) for p in sorted(glob.glob(os.path.join(seq_dir, "*.json")))]
     if not seqs:
         print(f"no sequences in {seq_dir} — run `python -m brain.showdown <id>` first")
     else:
-        batch(seqs, out_dir, music)
+        m = music or default_music()
+        b = default_broll()
+        print(f"[clipfarm] music={m or 'none'}  broll={len(b)} clips  interval={BROLL_INTERVAL}s")
+        batch(seqs, out_dir, m, b)
