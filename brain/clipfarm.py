@@ -28,6 +28,11 @@ FONT = os.environ.get("CLIP_FONT", "Liberation Sans")
 BROLL_INTERVAL = float(os.environ.get("BROLL_INTERVAL", "0.8"))  # seconds per cut
 BROLL_DARKEN = os.environ.get("BROLL_DARKEN", "-0.28")           # eq brightness
 
+# Which slice of the song to use as the drop. Default: the FIRST part — start at
+# 0s, and let the drop last as long as MUSIC_CHUNK (or the winner hold if unset).
+MUSIC_START = float(os.environ.get("MUSIC_START", "0"))          # seconds into the song
+MUSIC_CHUNK = os.environ.get("MUSIC_CHUNK")                      # seconds; blank = winner hold
+
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 _VID_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
 
@@ -195,29 +200,60 @@ def _build_base(seq: dict, broll: list[str], tmp_dir: str) -> str:
 # ---------------------------------------------------------------------------
 
 def render(seq: dict, out_path: str, music_path: str | None = None,
-           broll: list[str] | None = None) -> str:
+           broll: list[str] | None = None,
+           music_start: float | None = None, music_chunk: float | None = None) -> str:
     """Render one sequence to a 9:16 mp4. Music + B-roll auto-discovered from
     assets/ if not passed. The song drops (and the montage starts) at
-    seq['song_drop_at'], over the winner reveal."""
+    seq['song_drop_at'], over the winner reveal.
+
+    Only a SLICE of the song is used: from `music_start` for `music_chunk` seconds
+    (defaults: MUSIC_START / MUSIC_CHUNK env, else start=0 and chunk=the winner
+    hold). If the chosen chunk is longer than the hold, the drop is extended so the
+    whole chunk plays."""
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     if music_path is None:
         music_path = default_music()
     if broll is None:
         broll = default_broll()
+    if music_start is None:
+        music_start = MUSIC_START
+    if music_chunk is None:
+        music_chunk = float(MUSIC_CHUNK) if MUSIC_CHUNK else None
 
-    total = float(seq["total_dur"])
-    drop_ms = int(float(seq.get("song_drop_at", 0)) * 1000)
+    drop = float(seq.get("song_drop_at", 0))
+    hold = float(seq["total_dur"]) - drop
+    have_music = bool(music_path and os.path.exists(music_path))
+
+    # The drop lasts the song chunk (so the "first part" plays out fully), else
+    # the sequence's own winner hold.
+    drop_len = music_chunk if (have_music and music_chunk) else hold
+    total = drop + drop_len
+
+    # Work on a copy so the winner caption + montage span the whole drop.
+    seq = dict(seq)
+    seq["total_dur"] = total
+    seq["cards"] = [dict(c) for c in seq["cards"]]
+    for c in seq["cards"]:
+        if c.get("kind") == "winner":
+            c["dur"] = drop_len
+
     ass_path = out_path.rsplit(".", 1)[0] + ".ass"
     build_ass(seq, ass_path)
+    drop_ms = int(drop * 1000)
+    fade_out_at = max(0.0, total - 0.8)
 
     with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(out_path))) as tmp:
         base = _build_base(seq, broll, tmp)
 
-        if music_path and os.path.exists(music_path):
-            cmd = ["ffmpeg", "-y", "-i", base, "-i", music_path,
+        if have_music:
+            # Input-seek grabs exactly the chosen slice of the song.
+            cmd = ["ffmpeg", "-y", "-i", base,
+                   "-ss", f"{music_start:.2f}", "-t", f"{drop_len:.2f}", "-i", music_path,
                    "-filter_complex",
                    f"[0:v]ass='{ass_path}'[v];"
-                   f"[1:a]adelay={drop_ms}|{drop_ms},afade=t=in:st={drop_ms/1000:.2f}:d=0.6[a]",
+                   f"[1:a]adelay={drop_ms}|{drop_ms},"
+                   f"afade=t=in:st={drop:.2f}:d=0.6,"
+                   f"afade=t=out:st={fade_out_at:.2f}:d=0.8[a]",
                    "-map", "[v]", "-map", "[a]", "-t", f"{total:.2f}",
                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
                    out_path]
@@ -230,13 +266,14 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
 
 
 def batch(sequences: list[dict], out_dir: str, music_path: str | None = None,
-          broll: list[str] | None = None) -> list[str]:
+          broll: list[str] | None = None,
+          music_start: float | None = None, music_chunk: float | None = None) -> list[str]:
     os.makedirs(out_dir, exist_ok=True)
     out = []
     for seq in sequences:
         clip = os.path.join(out_dir, f"{seq['dilemma_id']}.mp4")
         try:
-            out.append(render(seq, clip, music_path, broll))
+            out.append(render(seq, clip, music_path, broll, music_start, music_chunk))
             print(f"[clipfarm] rendered {clip}  ({seq['total_dur']:.1f}s, winner {seq['winner_name']})")
         except Exception as e:
             print(f"[clipfarm] FAILED {seq['dilemma_id']}: {e}")
@@ -276,5 +313,7 @@ if __name__ == "__main__":
     else:
         m = music or default_music()
         b = default_broll()
-        print(f"[clipfarm] music={m or 'none'}  broll={len(b)} clips  interval={BROLL_INTERVAL}s")
+        chunk = float(MUSIC_CHUNK) if MUSIC_CHUNK else None
+        print(f"[clipfarm] music={m or 'none'}  broll={len(b)} clips  interval={BROLL_INTERVAL}s  "
+              f"song slice: start={MUSIC_START}s chunk={chunk or 'winner-hold'}")
         batch(seqs, out_dir, m, b)
