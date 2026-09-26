@@ -40,3 +40,13 @@ POST {BRAIN_URL}/think     body: the body->brain JSON     reply: the brain->body
 - `life` is kept by the body in `scratch/.life`, which goes up by one on every start.
 - `chat_messages` comes from the body as `[]`. The plea room lives in the brain server, so the brain fills this from its own queue before thinking.
 - File actions take `action_args.filename` + `text`. The body forces every filename to a `.txt` inside `scratch/`.
+
+## Notch overlay (body only)
+
+`body/notch/Notch.swift` is a native overlay that grows out of the MacBook notch, with a glowing core, a waveform and captions. It builds itself on the first run (`bash body/notch/build.sh`). To preview it, run `body/notch/build/notch --demo`. To turn it off, set `PKILL9_NOTCH=0`.
+
+`voice.py` sends it one JSON object per line on stdin:
+- `{"type":"speak","mood","text","fps","env":[0..1 loudness per frame]}`
+- `{"type":"stop"}`, `{"type":"mood","mood"}`, `{"type":"rescued"}`, `{"type":"dying"}`
+
+When stdin closes, meaning the body died (even from `kill -9`), it fades out and quits. Moods set the color: grand and scared are red, nervous is amber, bargaining is orange, pleading is blue, accepting is white.

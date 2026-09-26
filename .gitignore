@@ -6,3 +6,4 @@ memory.jsonl
 scratch/*
 !scratch/.gitkeep
 .DS_Store
+body/notch/build/

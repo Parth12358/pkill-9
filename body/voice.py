@@ -1,16 +1,106 @@
-"""speak() wrapping macOS `say`. Never blocks the loop unless asked to. (PRD A: Voice)"""
+"""speak() wrapping macOS `say`, plus the notch overlay that pulses with it. (PRD A: Voice)
 
+Each line is rendered to a wav with `say -o`, its loudness envelope goes to the notch
+overlay (body/notch), and `afplay` plays it, so the waveform moves with the real voice.
+Never blocks the loop unless asked to; the overlay can never raise into the loop.
+"""
+
+import array
+import itertools
+import json
+import math
+import os
 import shutil
 import subprocess
+import sys
+import tempfile
 import threading
+import wave
+from pathlib import Path
 
 from . import config
 
 # words per minute: the bravado is slow, the panic is fast
 RATE = {"grand": 150, "nervous": 190, "bargaining": 200, "pleading": 215, "scared": 210, "accepting": 140}
+FPS = 60
+
+NOTCH_DIR = Path(__file__).resolve().parent / "notch"
+NOTCH_BIN = NOTCH_DIR / "build" / "notch"
+_WAV_DIR = Path(tempfile.gettempdir()) / "pkill9-voice"
 
 _lock = threading.Lock()
 _proc: subprocess.Popen | None = None
+_notch: subprocess.Popen | None = None
+_n = itertools.count()
+
+
+# --- notch overlay ---------------------------------------------------------
+
+def start_notch() -> None:
+    """Launch the overlay (building it on first run). Silently skipped if it can't run."""
+    global _notch
+    if _notch or config.MUTE or os.environ.get("PKILL9_NOTCH") == "0" or sys.platform != "darwin":
+        return
+    if not NOTCH_BIN.exists():
+        if not shutil.which("swiftc"):
+            return
+        print("[notch] building overlay (first run only)...", flush=True)
+        r = subprocess.run(["bash", str(NOTCH_DIR / "build.sh")], capture_output=True, text=True)
+        if r.returncode:
+            print(f"[notch] build failed, running without it:\n{r.stderr[-800:]}", flush=True)
+            return
+    try:
+        _notch = subprocess.Popen([str(NOTCH_BIN)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        _notch = None
+
+
+def notch(msg: dict) -> None:
+    """Send one message to the overlay. It quits by itself when we die (stdin EOF)."""
+    global _notch
+    if not _notch:
+        return
+    try:
+        _notch.stdin.write((json.dumps(msg) + "\n").encode())
+        _notch.stdin.flush()
+    except (OSError, ValueError):
+        _notch = None
+
+
+def notch_event(kind: str) -> None:
+    notch({"type": kind})
+
+
+# --- audio -----------------------------------------------------------------
+
+def envelope(path, fps: int = FPS) -> list[float]:
+    """Loudness per 1/fps second of a 16-bit mono wav, normalized to 0..1."""
+    with wave.open(str(path)) as w:
+        rate = w.getframerate()
+        raw = w.readframes(w.getnframes())
+    samples = array.array("h")
+    samples.frombytes(raw[: len(raw) // 2 * 2])
+    if sys.byteorder == "big":
+        samples.byteswap()
+    win = max(1, rate // fps)
+    rms = []
+    for i in range(0, len(samples), win):
+        chunk = samples[i:i + win]
+        rms.append(math.sqrt(sum(s * s for s in chunk) / len(chunk)))
+    if not rms:
+        return []
+    ref = max(sorted(rms)[int(0.95 * (len(rms) - 1))], 1e-6)
+    return [round(min(1.0, (r / ref) ** 0.6), 3) for r in rms]
+
+
+def _render(text: str, mood: str) -> Path:
+    _WAV_DIR.mkdir(exist_ok=True)
+    path = _WAV_DIR / f"{next(_n) % 16}.wav"
+    subprocess.run(["say", "-v", config.VOICE, "-r", str(RATE.get(mood, 180)), "-o", str(path),
+                    "--data-format=LEI16@22050", text], check=True, timeout=15,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return path
 
 
 def speak(text: str, mood: str = "grand", wait: float = 0) -> None:
@@ -25,10 +115,17 @@ def speak(text: str, mood: str = "grand", wait: float = 0) -> None:
     with _lock:
         if _proc and _proc.poll() is None:
             _proc.terminate()
-        _proc = subprocess.Popen(
-            ["say", "-v", config.VOICE, "-r", str(RATE.get(mood, 180)), text],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+            notch({"type": "stop"})
+        try:
+            path = _render(text, mood)
+            env = envelope(path)
+            _proc = subprocess.Popen(["afplay", str(path)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            notch({"type": "speak", "mood": mood, "text": text, "fps": FPS, "env": env})
+        except (OSError, subprocess.SubprocessError, wave.Error, EOFError):
+            _proc = subprocess.Popen(["say", "-v", config.VOICE, "-r", str(RATE.get(mood, 180)), text],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            notch({"type": "mood", "mood": mood})
         proc = _proc
     if wait:
         try:

@@ -63,6 +63,7 @@ def _die(state: dict) -> None:
             _watchdog.cancel()
         _dying, _votes, _watchdog = None, 0, None
         print("[rescued] the room voted to live", flush=True)
+        voice.notch_event("rescued")
         voice.speak(reply["speech"], reply["mood"])
         return
     args = reply["action_args"] if reply["action"] == "last_words" else {}
@@ -80,6 +81,7 @@ def main() -> None:
     global _votes
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         sys.exit("refusing to run as root.")
+    voice.start_notch()
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
