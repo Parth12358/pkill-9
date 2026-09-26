@@ -3,8 +3,10 @@
 One text-in / text-out call: `complete(system, user) -> str`. The backend is
 chosen by the BRAIN_LLM env var:
 
-  BRAIN_LLM=claude    (default) shell out to the installed `claude` CLI in print
-                      mode. Zero API key, uses existing Claude Code auth.
+  BRAIN_LLM=openrouter (default) DeepSeek via OpenRouter, OPENROUTER_API_KEY.
+                      Cheap and fast enough for the body's 3s kill-turn deadline.
+  BRAIN_LLM=claude    shell out to the installed `claude` CLI in print mode, with
+                      every tool disabled (plea-room text must never reach a tool).
   BRAIN_LLM=deepseek  OpenAI-compatible HTTP call using DEEPSEEK_API_KEY. Faster
                       per-turn; use when the key is set.
 
@@ -15,7 +17,7 @@ fine — the body holds the last line / uses canned reactions for instant events
 import os
 import subprocess
 
-DEFAULT_BACKEND = os.environ.get("BRAIN_LLM", "claude").strip().lower()
+DEFAULT_BACKEND = os.environ.get("BRAIN_LLM", "openrouter").strip().lower()
 CLAUDE_TIMEOUT = int(os.environ.get("BRAIN_CLAUDE_TIMEOUT", "60"))
 DEEPSEEK_TIMEOUT = int(os.environ.get("BRAIN_DEEPSEEK_TIMEOUT", "30"))
 DEEPSEEK_URL = os.environ.get(
@@ -27,6 +29,12 @@ DEEPSEEK_URL = os.environ.get(
 CLAUDE_MODELS = {
     "fast": os.environ.get("BRAIN_FAST_MODEL", "haiku"),
     "strong": os.environ.get("BRAIN_STRONG_MODEL", "sonnet"),
+}
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_TIMEOUT = int(os.environ.get("BRAIN_OPENROUTER_TIMEOUT", "20"))
+OPENROUTER_MODELS = {
+    "fast": os.environ.get("OPENROUTER_FAST_MODEL") or "deepseek/deepseek-v4.1-flash",
+    "strong": os.environ.get("OPENROUTER_STRONG_MODEL") or "deepseek/deepseek-v4.1-flash",
 }
 DEEPSEEK_MODELS = {
     "fast": os.environ.get("DEEPSEEK_FAST_MODEL", "deepseek-chat"),
@@ -50,6 +58,8 @@ def complete(system: str, user: str, backend: str | None = None,
     backend = (backend or DEFAULT_BACKEND).strip().lower()
     if tier not in ("fast", "strong"):
         tier = "fast"
+    if backend == "openrouter":
+        return _complete_openrouter(system, user, OPENROUTER_MODELS[tier])
     if backend == "claude":
         return _complete_claude(system, user, CLAUDE_MODELS[tier])
     if backend == "deepseek":
@@ -57,12 +67,42 @@ def complete(system: str, user: str, backend: str | None = None,
     raise LLMError(f"unknown BRAIN_LLM backend: {backend!r}")
 
 
+def _complete_openrouter(system: str, user: str, model: str) -> str:
+    """OpenAI-compatible chat completion via OpenRouter (default: DeepSeek)."""
+    import requests
+
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise LLMError("OPENROUTER_API_KEY not set")
+    try:
+        resp = requests.post(
+            OPENROUTER_URL,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": user}],
+                "temperature": 1.0,
+                "max_tokens": 400,
+                "reasoning": {"enabled": False},  # thinking would blow the 3s kill turn
+            },
+            timeout=OPENROUTER_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+    except requests.RequestException as e:
+        raise LLMError(f"openrouter request failed: {e}") from e
+    except (KeyError, IndexError, ValueError, TypeError) as e:
+        raise LLMError(f"openrouter returned an unexpected shape: {e}") from e
+
+
 def _complete_claude(system: str, user: str, model: str) -> str:
     """Call the `claude` CLI in print mode. System prompt is appended so the
     personality holds; the turn's state goes on stdin's prompt argument."""
     try:
         proc = subprocess.run(
-            ["claude", "-p", "--model", model, "--append-system-prompt", system, user],
+            # --tools "": no file/shell/web tools, so an audience prompt injection can't read the Mac
+            ["claude", "-p", "--tools", "", "--model", model, "--append-system-prompt", system, user],
             capture_output=True,
             text=True,
             timeout=CLAUDE_TIMEOUT,

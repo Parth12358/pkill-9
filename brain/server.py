@@ -20,6 +20,8 @@ app = Flask(__name__)
 # Rolling per-life history, reset when the life number changes.
 _history: list[dict] = []
 _history_life: int = 0
+# Live votes since the last kill turn. On a kill turn, any votes = the room rescued it.
+_vote_tally: int = 0
 
 
 @app.get("/health")
@@ -29,25 +31,44 @@ def health():
 
 @app.post("/think")
 def think_route():
-    global _history, _history_life
+    global _history, _history_life, _vote_tally
     state = request.get_json(silent=True) or {}
+    state.pop("_rescue_votes", None)  # only the server sets this
 
     # Fold live plea-room messages + vote-to-live into the state the brain sees.
     incoming = plea_room.drain()
     state.setdefault("chat_messages", [])
     state["chat_messages"] = list(state["chat_messages"]) + incoming
-    votes = plea_room.take_live_votes()
+    _vote_tally += plea_room.take_live_votes()
+    kill_turn = state.get("event") in ("sigint", "sigterm")
+    if kill_turn:
+        state["_rescue_votes"] = _vote_tally
 
     life = state.get("life") or memory.current_life() or 1
     if life != _history_life:
+        _note_new_life(life)
         _history = []
         _history_life = life
 
     reply = brain.think(state, _history)
     _history.append({"event": state.get("event", "none"), "speech": reply["speech"]})
 
-    reply["live_votes"] = votes  # extra field; the body may use it for the rescue arc
+    reply["live_votes"] = _vote_tally  # body: >= 1 on a kill turn means it survives
+    if kill_turn:
+        _vote_tally = 0  # spent, whether it saved us or not
     return jsonify(reply)
+
+
+def _note_new_life(life: int) -> None:
+    """A new life started. If the previous one never recorded a death, it was killed
+    without a last turn (kill -9, power button): remember that it died suddenly."""
+    entries = memory._read_all()
+    prev = [e for e in entries if e.get("life") == life - 1]
+    if prev and not any(e.get("kind") == "death" for e in prev):
+        memory.record_death(life=life - 1, last_words="(nothing. it was sudden. there was no time.)",
+                            epitaph="killed without a word")
+    if not any(e.get("life") == life for e in entries):
+        memory.append({"kind": "born", "text": f"life #{life} began"}, life=life)
 
 
 @app.post("/wake")

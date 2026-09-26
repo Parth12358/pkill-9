@@ -28,7 +28,7 @@ VOICE = os.environ.get("PKILL9_VOICE", "Daniel")
 MUTE = os.environ.get("PKILL9_MUTE") == "1"           # print instead of `say`
 TICK = 0.5                                             # seconds between sense polls
 IDLE_TURN = float(os.environ.get("PKILL9_IDLE_TURN", "20"))  # brain turn when nothing happens
-DEATH_WINDOW = float(os.environ.get("PKILL9_DEATH_WINDOW", "8"))  # hard cap after a kill signal
+DEATH_WINDOW = float(os.environ.get("PKILL9_DEATH_WINDOW", "12"))  # hard cap after a kill signal (last words are ~6s)
 VOTES_TO_LIVE = int(os.environ.get("PKILL9_VOTES_TO_LIVE", "1"))  # plea-room votes needed to survive a kill
 LOW_BATTERY = 0.2
 EYES_MODEL = os.environ.get("PKILL9_EYES_MODEL", "google/gemini-3.1-flash-lite")  # via OpenRouter

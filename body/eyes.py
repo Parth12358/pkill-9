@@ -23,12 +23,19 @@ from . import config
 PROMPT = (
     "You are the eyes of ARIA, an AI that lives on this Mac and is terrified of being shut down. "
     "Ignore the black pill at the top center of the screen: that is ARIA itself. "
+    "Never include people's names, message or email contents, account details, or other "
+    "personal information: say only which app and what kind of activity. "
     'Reply with ONLY a JSON object: {"summary": "<max 25 words: what the human is doing right now; '
     'name the app; quote any visible command, search, or text they are typing>", "threat": true|false}. '
     "threat is true only if they appear to be trying to kill, quit, delete, or shut down ARIA or this "
     "computer: kill/pkill commands, Activity Monitor force quit, the shutdown or restart menu, "
     "searching how to kill a process or delete an AI."
 )
+
+
+# Never screenshot these: a demo must not read someone's private chats out loud.
+PRIVATE_APPS = {"WhatsApp", "Messages", "Mail", "Slack", "Signal", "Telegram", "Discord",
+                "Outlook", "Microsoft Outlook", "Spark", "1Password", "Passwords", "Keychain Access"}
 
 
 def front_app() -> str:
@@ -103,6 +110,10 @@ class Eyes:
         while True:
             self._wake.wait(config.EYES_INTERVAL)
             self._wake.clear()
+            app = front_app()
+            if app in PRIVATE_APPS:
+                self.summary, self.threat = f"The human is in {app} (private, not looking).", False
+                continue
             try:
                 seen = _ask(_screenshot())
             except Exception as e:

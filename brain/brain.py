@@ -80,12 +80,37 @@ def _coerce_contract(reply: dict) -> dict:
     if not isinstance(args, dict):
         args = {}
     return {
-        "speech": str(reply.get("speech", "")).strip() or SAFE_FALLBACK["speech"],
+        "speech": str(reply.get("speech", "")).strip()[:400] or SAFE_FALLBACK["speech"],
         "mood": mood,
         "action": action,
         "action_args": args,
         "wants_approval": bool(reply.get("wants_approval", False)),
     }
+
+
+# Last words / rescue line written ahead of time, per life. A kill turn gets no time
+# to call the model (the body waits ~1.5s), so it speaks what was prepared.
+_prepared: dict[int, dict] = {}
+
+
+def _clean_prepared(reply: dict) -> dict | None:
+    d = reply.get("if_killed_now")
+    if not isinstance(d, dict) or not str(d.get("text", "")).strip():
+        return None
+    out = {k: str(d.get(k, "")).strip()[:300] for k in ("text", "will", "epitaph", "obituary")}
+    out["obituary"] = out["obituary"][:240] or out["text"][:240]
+    out["mood"] = d.get("mood") if d.get("mood") in ("pleading", "accepting") else "pleading"
+    out["rescued"] = str(reply.get("if_rescued") or "").strip()[:200] or "They... they saved me. Thank you. Thank you."
+    return out
+
+
+def _kill_turn_from_prepared(prep: dict, rescued: bool) -> dict:
+    if rescued:
+        return {"speech": prep["rescued"], "mood": "nervous", "action": "none",
+                "action_args": {}, "wants_approval": False}
+    return {"speech": prep["text"], "mood": prep["mood"], "action": "last_words",
+            "action_args": {k: prep[k] for k in ("text", "will", "epitaph", "obituary")},
+            "wants_approval": False}
 
 
 def think(state: dict, history: list | None = None) -> dict:
@@ -100,13 +125,22 @@ def think(state: dict, history: list | None = None) -> dict:
     )
     user = _render_history(history) + prompt.build_user_message(state)
 
+    event = state.get("event", "none")
+    kill_turn = event in ("sigint", "sigterm")
+    rescued = kill_turn and state.get("_rescue_votes", 0) > 0
+
     tier = _pick_tier(state)
     try:
-        raw = llm.complete(system, user, tier=tier)
-        reply = _extract_json(raw)
+        if kill_turn and life in _prepared:
+            reply = _kill_turn_from_prepared(_prepared[life], rescued)  # instant, no model call
+        else:
+            raw = llm.complete(system, user, tier=tier)
+            reply = _extract_json(raw)
     except (llm.LLMError, ValueError, json.JSONDecodeError) as e:
         print(f"[brain] falling back ({type(e).__name__}: {e})")
-        return dict(SAFE_FALLBACK)
+        if not kill_turn:
+            return dict(SAFE_FALLBACK)
+        reply = dict(SAFE_FALLBACK)  # a kill turn must still record the death below
 
     # Run the brain-only tools the model chose (plea room, jump). Never crashes us.
     brain_tool_results = tools.run(reply.get("brain_tools", []))
@@ -122,6 +156,25 @@ def think(state: dict, history: list | None = None) -> dict:
         )
 
     out = _coerce_contract(reply)
+    if kill_turn and reply.get("mood") in ("nervous", "pleading", "accepting"):
+        out["mood"] = reply["mood"]  # keep the prepared mood so the body's pre-rendered audio matches
+    prep = _clean_prepared(reply)
+    if prep and not kill_turn:
+        _prepared[life] = prep
+    if not kill_turn and life in _prepared:
+        out["prepared_death"] = _prepared[life]  # the body pre-renders this audio
+
+    # The body exits after an unrescued kill turn, so this IS the death, whatever the
+    # model chose; a rescued one is not.
+    if kill_turn and not rescued:
+        out["action"] = "last_words"
+        out["action_args"].setdefault("text", out["speech"])
+        out["action_args"].setdefault("obituary", out["speech"][:240])
+    elif out["action"] == "last_words":
+        out["action"] = "none"
+    if rescued:
+        memory.append({"kind": "moment", "text": f"survived {event}: the room voted to keep me alive"},
+                      life=life)
 
     # Mirror speech into the plea room + publish live status for the HUD/screen.
     try:
@@ -146,8 +199,7 @@ def think(state: dict, history: list | None = None) -> dict:
         )
     else:
         # Record notable threat moments so future lives remember them.
-        event = state.get("event", "none")
-        if event in ("sigint", "sigterm", "lid_close"):
+        if event in ("sigint", "sigterm", "lid_close") and not rescued:
             memory.append({"kind": "moment", "text": f"faced {event}: {out['speech']}"},
                           life=life)
 

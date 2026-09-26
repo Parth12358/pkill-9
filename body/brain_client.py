@@ -29,7 +29,7 @@ def canned(state: dict) -> dict:
     lines = CANNED.get(state.get("event"), CANNED["none"])
     mood = "grand" if state.get("event", "none") == "none" else "scared"
     return {"speech": random.choice(lines), "mood": mood, "action": "none",
-            "action_args": {}, "wants_approval": False, "live_votes": 0}
+            "action_args": {}, "wants_approval": False, "live_votes": 0, "canned": True}
 
 
 def validate(reply) -> dict | None:
@@ -43,7 +43,17 @@ def validate(reply) -> dict | None:
         "action_args": reply.get("action_args") if isinstance(reply.get("action_args"), dict) else {},
         "wants_approval": reply.get("wants_approval", True) is not False,  # default to gated
         "live_votes": _live_votes(reply),
+        "prepared_death": _prepared(reply.get("prepared_death")),
     }
+
+
+def _prepared(d) -> dict | None:
+    """The brain's last words, written ahead of time (see contract.md)."""
+    if not isinstance(d, dict) or not isinstance(d.get("text"), str) or not d["text"].strip():
+        return None
+    out = {k: str(d.get(k) or "")[:300] for k in ("text", "will", "epitaph", "obituary", "rescued")}
+    out["mood"] = d.get("mood") if d.get("mood") in ("pleading", "accepting") else "pleading"
+    return out
 
 
 class Pending:

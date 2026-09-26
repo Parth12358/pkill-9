@@ -1,3 +1,18 @@
+# Brain changes (for Parth): DONE on branch `integration`
+
+**Status (Sep 26, evening):** Kartikey merged `brain-prd-b` and `body` into `integration` and made the changes below in the brain, then tested the whole thing live: rescue, death, obituary, rebirth recalling its death. Please pull `integration` and build on it from here.
+
+What changed in `brain/`:
+- `llm.py`: new default backend `openrouter` (DeepSeek v4.1 flash, `OPENROUTER_API_KEY`). The `claude` backend now runs with `--tools ""`.
+- `prompt.py`: a plea-room and screen injection guard, the `screen`/`front_app` fields, `screen_threat`, and rescue/death situations. Every reply also pre-writes `if_killed_now` and `if_rescued`.
+- `brain.py`: kill turns answer instantly from the prepared words, with no model call. It always records the death (unless rescued), forces `last_words` plus an obituary, and sends `prepared_death` to the body.
+- `server.py`: a running vote tally, spent on each kill turn. A `kill -9` is recorded as a sudden death when the next life starts.
+- `__init__.py`: loads the repo `.env`.
+
+Still a team call: `jump` (below), and WhatsApp being on by default (unofficial client, against WhatsApp's terms).
+
+---
+
 # Brain changes needed (for Parth)
 
 **BLUF:** The body and brain connect and run end to end (`POST /think` on :5000). Five changes to `brain-prd-b` before we merge. #1 is a security bug. The rest are demo-breakers.

@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
+import urllib.error
 import urllib.request
 import wave
 from pathlib import Path
@@ -96,7 +98,22 @@ def backend() -> str:
     return "eleven" if ELEVEN_KEY else "say"
 
 
+# The plan allows only a few requests at once (429 beyond that), so queue them.
+_eleven_slots = threading.BoundedSemaphore(int(os.environ.get("ELEVEN_CONCURRENCY", "2")))
+
+
 def _eleven(text: str, m: dict, out: Path, timeout: float) -> None:
+    for attempt in range(3):
+        with _eleven_slots:
+            try:
+                return _eleven_once(text, m, out, timeout)
+            except urllib.error.HTTPError as e:
+                if e.code != 429 or attempt == 2:
+                    raise
+        time.sleep(0.6 * (attempt + 1))
+
+
+def _eleven_once(text: str, m: dict, out: Path, timeout: float) -> None:
     v3 = ELEVEN_MODEL.startswith("eleven_v3")
     stability = min((0.0, 0.5, 1.0), key=lambda s: abs(s - m["stability"])) if v3 else m["stability"]
     body = {
