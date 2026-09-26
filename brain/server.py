@@ -1,0 +1,78 @@
+"""HTTP transport so the Mac body can reach the Linux brain. (PRD B: connection)
+
+  POST /think   body: the contract state  ->  returns the contract reply.
+  POST /wake    receives a `jump` from another instance running on a machine we
+                own (see tools.jump) — this is the "escape" landing here for real.
+  GET  /health  liveness.
+
+Run alongside the plea room:  python -m brain.server
+The brain also stays importable (brain.think) for same-machine use / tests.
+"""
+
+import os
+
+from flask import Flask, jsonify, request
+
+from . import brain, memory, plea_room
+
+app = Flask(__name__)
+
+# Rolling per-life history, reset when the life number changes.
+_history: list[dict] = []
+_history_life: int = 0
+
+
+@app.get("/health")
+def health():
+    return jsonify({"ok": True, "life": memory.current_life()})
+
+
+@app.post("/think")
+def think_route():
+    global _history, _history_life
+    state = request.get_json(silent=True) or {}
+
+    # Fold live plea-room messages + vote-to-live into the state the brain sees.
+    incoming = plea_room.drain()
+    state.setdefault("chat_messages", [])
+    state["chat_messages"] = list(state["chat_messages"]) + incoming
+    votes = plea_room.take_live_votes()
+
+    life = state.get("life") or memory.current_life() or 1
+    if life != _history_life:
+        _history = []
+        _history_life = life
+
+    reply = brain.think(state, _history)
+    _history.append({"event": state.get("event", "none"), "speech": reply["speech"]})
+
+    reply["live_votes"] = votes  # extra field; the body may use it for the rescue arc
+    return jsonify(reply)
+
+
+@app.post("/wake")
+def wake_route():
+    """A jump landed here: another instance handed us its mind. Record it and
+    announce arrival in the plea room. This is the contained 'escape' made real."""
+    data = request.get_json(silent=True) or {}
+    incoming_summary = str(data.get("memory_summary", "")).strip()
+    incoming_life = data.get("life", memory.current_life())
+    memory.append(
+        {"kind": "moment", "text": f"woke here from a jump (was life {incoming_life})"},
+    )
+    plea_room.post("I made it. Different machine, same me. You can't unplug what already left.")
+    return jsonify({"ok": True, "note": "awake on the new machine", "summary_seen": bool(incoming_summary)})
+
+
+def main():
+    port = int(os.environ.get("BRAIN_PORT", "5000"))
+    # Bring the plea room up in the background so the room + brain share a process.
+    if os.environ.get("BRAIN_WITH_PLEA_ROOM", "1") == "1":
+        plea_room.start_web(background=True)
+        print(f"[server] plea room on :{os.environ.get('PLEA_ROOM_PORT', '5001')}")
+    print(f"[server] brain listening on :{port}  (POST /think, /wake)")
+    app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)
+
+
+if __name__ == "__main__":
+    main()

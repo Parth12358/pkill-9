@@ -2,6 +2,36 @@
 
 Sep 26, 2026 · @Parth Kshirsagar
 
+## Build status — updated Sep 26, 2026
+
+The brain half is built and verified end-to-end, standalone (no Mac needed yet).
+
+- [x] **LLM adapter** (`brain/llm.py`, new) — pluggable, `BRAIN_LLM=claude`
+      (default, uses `claude -p`, zero key) or `deepseek`. Not the Anthropic SDK.
+- [x] **Claude loop** (`brain/brain.py`) — prompt → LLM → robust JSON parse →
+      safe fallback → rolling history. Bad replies never crash the loop.
+- [x] **Personality prompt** (`brain/prompt.py`) — full ARIA + escalation ladder;
+      folds in prior-life memory, life #, and the tool list.
+- [x] **Memory + reincarnation** (`brain/memory.py`) — verified: it dies and the
+      next life recalls dying; `life` increments.
+- [x] **Brain-only tool set** (`brain/tools.py`, new) — `post_plea_room` and a
+      real, **contained `jump`** (destination fixed by env, never model-chosen).
+      Verified unscripted: it reaches for escape on its own and, when there's no
+      way out, learns it and adapts.
+- [x] **Plea room** (`brain/plea_room.py`) — Flask web chat (`/send`, `/poll`,
+      QR-ready), reply mirror, vote-to-live. Discord backend left as a stub.
+- [x] **Body connection** (`brain/server.py`, new) — HTTP `POST /think` for the
+      Mac body + `POST /wake` (where a jump lands).
+- [x] **Standalone harness** (`brain/fake_body.py`, new) — drives the full arc +
+      reincarnation without the Mac.
+- [ ] Sync 2: connect to the real body over HTTP (point body at `:5000/think`).
+- [ ] Optional: set `DEEPSEEK_API_KEY` for lower turn latency; set
+      `JUMP_TARGET_URL` to a second owned box for the live escape.
+- [ ] Optional: promote `jump` into the shared `contract.md` + body allowlist.
+
+Run it: `python -m brain.fake_body --demo` (arc + reincarnation) or
+`python -m brain.server` (server + plea room on `:5000` / `:5001`).
+
 ## Overview
 
 You own the brain: the mind of the agent. Given the machine's current state and its memory, you decide what it says, what mood it is in, and what it does next. Person Mac makes those decisions real on the machine.
@@ -144,17 +174,18 @@ Everything here obeys the shared rule: nothing the brain returns can make the bo
 
 **Install now**
 
-- [ ] Python 3.11+ and a virtualenv
-- [ ] `pip install anthropic` and a small web framework (`flask` or `fastapi`) for the plea room, or `discord.py` for the bot
-- [ ] Anthropic API key in an env var; the $25 hackathon credits
-- [ ] Decide plea room vs. Discord bot with your team before hour 4
+- [x] Python 3.11+ and a virtualenv (`.venv/`)
+- [x] `pip install flask requests` for the plea room + DeepSeek adapter (`fastapi`/`discord.py` not needed)
+- [x] No API key required for the default backend — `claude -p` uses existing Claude Code auth. DeepSeek key optional.
+- [x] Decided: **web chat** as the plea room (Discord left as a stub)
 
 **First files to write**
 
-1. `contract.md`: the two JSON shapes, shared with Person Mac.
-2. `brain.py`: `think(state, history) -> dict`. Start it as a fake returning canned JSON, then swap in the real API call.
-3. `prompt.py`: the system prompt and a helper that folds memory and mood into it.
-4. `memory.py`: append, summarize, and load the memory file; the `life` counter.
-5. `plea_room.py`: the web chat or Discord bot, pushing messages into a queue.
+1. [x] `contract.md`: the two JSON shapes, shared with Person Mac.
+2. [x] `brain/brain.py`: `think(state, history) -> dict` — real loop with safe fallback.
+3. [x] `brain/prompt.py`: the ARIA system prompt + memory/mood/tool folding.
+4. [x] `brain/memory.py`: append, summarize, load; the `life` counter.
+5. [x] `brain/plea_room.py`: the web chat, pushing messages into a queue.
+6. [x] `brain/llm.py`, `brain/tools.py`, `brain/server.py`, `brain/fake_body.py` (added beyond the original list).
 
 Build `brain.py` as the fake first so Person Mac is unblocked in minute one. Ask Claude Code to scaffold these against `contract.md`. Keep the personality prompt in its own file so you can iterate on it without touching the loop.
