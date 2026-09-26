@@ -3,6 +3,18 @@ __pycache__/
 *.pyc
 .env
 memory.jsonl
+brain/memory.jsonl
+brain/whatsapp_session.sqlite3*
+
+# Clip farm media (large / copyrighted) — keep the folders, not the files
+assets/love_me.*
+assets/*.mp3
+assets/*.m4a
+assets/*.wav
+assets/*.ogg
+assets/broll/*
+!assets/broll/.gitkeep
+!assets/README.md
 scratch/*
 !scratch/.gitkeep
 .DS_Store
