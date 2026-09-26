@@ -29,9 +29,12 @@ BG = "0x07070c"
 FONT = os.environ.get("CLIP_FONT", "Liberation Sans")
 BROLL_INTERVAL = float(os.environ.get("BROLL_INTERVAL", "0.8"))  # seconds per cut
 BROLL_DARKEN = os.environ.get("BROLL_DARKEN", "-0.28")           # eq brightness
-WINNER_HOLD = float(os.environ.get("SHOWDOWN_T_WINNER", "6.0"))  # default drop length
+WINNER_HOLD = float(os.environ.get("SHOWDOWN_T_WINNER", "12.0"))  # min drop length
 TTS_PAD = float(os.environ.get("TTS_PAD", "0.4"))                # gap after each spoken line
 TTS_RATE = os.environ.get("TTS_RATE", "+10%")                    # speech speed (punchier reel)
+MUSIC_TAIL = float(os.environ.get("MUSIC_TAIL", "4.0"))         # song seconds after the winner line
+WINNER_LEADIN = float(os.environ.get("WINNER_LEADIN", "0.6"))   # song plays alone before the line
+MUSIC_DUCK = float(os.environ.get("MUSIC_DUCK", "0.4"))         # music level while the winner speaks
 _FALLBACK_INTRO, _FALLBACK_ANSWER = 2.5, 3.5                     # if a synth fails
 
 # Which slice of the song to use as the drop. Default: the FIRST part — start at
@@ -216,12 +219,13 @@ def _tts_on(param: bool | None) -> bool:
     return tts.is_available()  # "auto"
 
 
-def _synth_and_retime(seq: dict, tmp: str) -> tuple[list[dict], float, list[dict]]:
-    """Voice the intro + each answer, and retime the cards so each lasts its spoken
-    length. Returns (cards, drop_time, [{path, start}]). The winner card's start is
-    set; its duration is fixed later to the song chunk."""
+def _synth_and_retime(seq: dict, tmp: str) -> tuple[list[dict], float, list[dict], dict | None]:
+    """Voice the intro + each answer (retiming cards to the speech) and the winner
+    line (spoken at the drop). Returns (cards, drop_time, [{path,start}], winner_tts)
+    where winner_tts is {path, dur} or None."""
     cards = [dict(c) for c in seq["cards"]]
     tts_items, t, ai = [], 0.0, 0
+    winner_tts = None
     for c in cards:
         if c["kind"] == "intro":
             p = tts.synth(c["text"], personas.NARRATOR_VOICE,
@@ -241,7 +245,11 @@ def _synth_and_retime(seq: dict, tmp: str) -> tuple[list[dict], float, list[dict
             t += c["dur"]
         elif c["kind"] == "winner":
             c["start"] = t
-    return cards, t, tts_items
+            v = personas.voice(c.get("key", personas.ARIA_KEY))
+            p = tts.synth(c["text"], v, os.path.join(tmp, "tts_winner.mp3"), rate=TTS_RATE)
+            if p:
+                winner_tts = {"path": p, "dur": tts.duration(p)}
+    return cards, t, tts_items, winner_tts
 
 
 # ---------------------------------------------------------------------------
@@ -273,14 +281,19 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
 
     with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(out_path))) as tmp:
         # Timeline: TTS retimes cards to speech; otherwise use the sequence timings.
+        winner_tts = None
         if use_tts:
-            cards, drop, tts_items = _synth_and_retime(seq, tmp)
+            cards, drop, tts_items, winner_tts = _synth_and_retime(seq, tmp)
         else:
             cards = [dict(c) for c in seq["cards"]]
             drop = float(seq.get("song_drop_at", 0))
             tts_items = []
 
-        drop_len = music_chunk if (have_music and music_chunk) else WINNER_HOLD
+        # The drop lasts long enough for the winner line to land plus a music tail,
+        # but at least the requested chunk / hold — so plenty of song plays.
+        base_len = music_chunk if (have_music and music_chunk) else WINNER_HOLD
+        win_len = (WINNER_LEADIN + winner_tts["dur"] + MUSIC_TAIL) if winner_tts else 0.0
+        drop_len = max(base_len, win_len)
         total = drop + drop_len
         for c in cards:
             if c["kind"] == "winner":
@@ -291,8 +304,9 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
         build_ass(seqc, ass_path)
         base = _build_base(seqc, broll, tmp)
 
-        # Assemble inputs + audio graph: spoken lines (each delayed to its card),
-        # then the song sliced + delayed to the drop.
+        # Audio graph: spoken lines delayed to their cards; the WINNER line spoken
+        # at the drop; the song sliced + delayed to the drop and DUCKED under the
+        # winner line so it cuts through the swell.
         inputs = ["-i", base]
         afilters = [f"[0:v]ass='{ass_path}'[v]"]
         alabels = []
@@ -302,13 +316,32 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
             ms = int(it["start"] * 1000)
             afilters.append(f"[{idx}:a]adelay={ms}|{ms}[a{idx}]")
             alabels.append(f"[a{idx}]"); idx += 1
+
+        win_label = None
+        win_start = drop + WINNER_LEADIN
+        if winner_tts:
+            inputs += ["-i", winner_tts["path"]]
+            wms = int(win_start * 1000)
+            afilters.append(f"[{idx}:a]adelay={wms}|{wms}[win]")
+            win_label = "[win]"; idx += 1
+
         if have_music:
             inputs += ["-ss", f"{music_start:.2f}", "-t", f"{drop_len:.2f}", "-i", music_path]
             ms = int(drop * 1000)
             fade_out_at = max(0.0, total - 0.8)
-            afilters.append(f"[{idx}:a]adelay={ms}|{ms},afade=t=in:st={drop:.2f}:d=0.6,"
-                            f"afade=t=out:st={fade_out_at:.2f}:d=0.8[amus]")
-            alabels.append("[amus]"); idx += 1
+            mf = (f"[{idx}:a]adelay={ms}|{ms},afade=t=in:st={drop:.2f}:d=0.6,"
+                  f"afade=t=out:st={fade_out_at:.2f}:d=0.8")
+            if winner_tts:
+                # Full song on the swell + tail; a steady lower bed only while the
+                # winner speaks — no dead spots, and the line cuts through.
+                ls = win_start - 0.2
+                le = win_start + winner_tts["dur"] + 0.3
+                mf += f",volume=volume='if(between(t,{ls:.2f},{le:.2f}),{MUSIC_DUCK},1)':eval=frame"
+            afilters.append(mf + "[amus]"); idx += 1
+            alabels.append("[amus]")
+
+        if win_label:
+            alabels.append(win_label)
 
         if alabels:
             if len(alabels) == 1:

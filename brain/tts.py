@@ -23,9 +23,10 @@ def is_available() -> bool:
 
 
 def synth(text: str, voice: str, out_path: str,
-          rate: str = "+0%", pitch: str = "+0Hz") -> str | None:
-    """Synthesize `text` in `voice` to an mp3. Returns the path, or None on any
-    failure (so a flaky network never breaks a render)."""
+          rate: str = "+0%", pitch: str = "+0Hz", trim: bool = True) -> str | None:
+    """Synthesize `text` in `voice` to an mp3. Trims leading/trailing silence so
+    lines pace tightly. Returns the path, or None on failure (so a flaky network
+    never breaks a render). Retries once on a transient error."""
     text = (text or "").strip()
     if not text:
         return None
@@ -38,12 +39,28 @@ def synth(text: str, voice: str, out_path: str,
         comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
         await comm.save(out_path)
 
-    try:
-        asyncio.run(_go())
-        return out_path if os.path.exists(out_path) and os.path.getsize(out_path) > 0 else None
-    except Exception as e:
-        print(f"[tts] synth failed ({voice}): {e}")
-        return None
+    for attempt in (1, 2):
+        try:
+            asyncio.run(_go())
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                return _trim(out_path) if trim else out_path
+        except Exception as e:
+            print(f"[tts] synth failed ({voice}, try {attempt}): {e}")
+    return None
+
+
+def _trim(path: str) -> str:
+    """Trim leading + trailing near-silence (edge-tts pads clips) so pacing is tight."""
+    trimmed = path.rsplit(".", 1)[0] + "_t.mp3"
+    sr = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,"
+          "areverse,"
+          "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,"
+          "areverse")
+    proc = subprocess.run(["ffmpeg", "-y", "-i", path, "-af", sr, trimmed],
+                          capture_output=True, text=True)
+    if proc.returncode == 0 and os.path.exists(trimmed) and os.path.getsize(trimmed) > 0:
+        return trimmed
+    return path  # trimming is best-effort; fall back to the untrimmed clip
 
 
 def duration(path: str) -> float:
