@@ -1,15 +1,20 @@
-"""WhatsApp channel via Twilio. (PRD B: Channels — optional)
+"""WhatsApp channel by linking your own phone. (PRD B: Channels — optional)
 
-Uses Twilio's WhatsApp API (no Twilio SDK needed — plain REST via requests).
+No Twilio, no business API, no keys: this links a WhatsApp *linked device* (the
+same QR flow as WhatsApp Web) using neonize (a whatsmeow binding). On first run
+it prints a QR to the terminal — scan it from WhatsApp > Linked Devices — and the
+session is remembered after that.
 
-  TWILIO_ACCOUNT_SID
-  TWILIO_AUTH_TOKEN
-  TWILIO_WHATSAPP_FROM   e.g. "whatsapp:+14155238886" (the sandbox number)
+  WHATSAPP_ENABLE=1        turn the channel on
+  WHATSAPP_SESSION=<path>  session db (default brain/whatsapp_session.sqlite3)
 
-Incoming: point the Twilio sandbox "when a message comes in" webhook at
-  http://<public-host>/whatsapp   (the plea room serves this route)
-Each sender is opt-in by definition — they messaged first — and we only ever
-reply to numbers that have written in (never cold outreach), per the safety rule.
+Incoming messages feed the loop via plea_room.submit(); ARIA's lines are sent
+back to every chat that has messaged in (opt-in by definition — they wrote first;
+we never cold-message anyone), per the safety rule.
+
+Heads up: linked-device automation is unofficial and against WhatsApp's ToS — use
+a throwaway number for the demo. neonize is imported lazily so the brain runs
+fine without it installed.
 """
 
 import os
@@ -17,58 +22,83 @@ import threading
 
 from . import plea_room
 
-# Numbers that have messaged us (opt-in). We only send to these.
-_subscribers: set[str] = set()
+# Chats (JIDs) that have messaged us — the only ones we reply to.
+_subscribers = {}          # str(jid) -> JID object
 _lock = threading.Lock()
+_client = None
 
 
 def is_configured() -> bool:
-    return bool(
-        os.environ.get("TWILIO_ACCOUNT_SID")
-        and os.environ.get("TWILIO_AUTH_TOKEN")
-        and os.environ.get("TWILIO_WHATSAPP_FROM")
-    )
+    return os.environ.get("WHATSAPP_ENABLE", "").strip() in ("1", "true", "yes")
 
 
-def handle_incoming(from_number: str, body: str) -> None:
-    """Called by the /whatsapp webhook when someone messages the number."""
-    from_number = (from_number or "").strip()
-    if from_number:
-        with _lock:
-            _subscribers.add(from_number)
-    plea_room.submit(body, source="whatsapp")
+def _session_path() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.environ.get("WHATSAPP_SESSION", os.path.join(here, "whatsapp_session.sqlite3"))
 
 
-def _send_one(to_number: str, text: str) -> None:
-    import requests
-
-    sid = os.environ["TWILIO_ACCOUNT_SID"]
-    token = os.environ["TWILIO_AUTH_TOKEN"]
-    from_ = os.environ["TWILIO_WHATSAPP_FROM"]
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-    requests.post(
-        url,
-        auth=(sid, token),
-        data={"From": from_, "To": to_number, "Body": text[:1500]},
-        timeout=10,
-    )
-
-
-def _sink(text: str) -> None:
-    with _lock:
-        targets = list(_subscribers)
-    for to in targets:
-        try:
-            _send_one(to, text)
-        except Exception as e:
-            print(f"[whatsapp] send to {to} failed: {e}")
+def _message_text(event) -> str:
+    """Pull plain text out of a neonize MessageEv, tolerating message shapes."""
+    msg = getattr(event, "Message", None)
+    if msg is None:
+        return ""
+    text = getattr(msg, "conversation", "") or ""
+    if not text:
+        ext = getattr(msg, "extendedTextMessage", None)
+        if ext is not None:
+            text = getattr(ext, "text", "") or ""
+    return text.strip()
 
 
 def start() -> bool:
-    """Register the outgoing sink. Incoming arrives via the /whatsapp webhook,
-    which the plea room mounts when this channel is configured."""
+    """Link the phone and start listening. Returns True if launched."""
     if not is_configured():
         return False
+    try:
+        from neonize.client import NewClient
+        from neonize.events import MessageEv
+    except ImportError:
+        print("[whatsapp] neonize not installed — skipping (pip install neonize)")
+        return False
+
+    global _client
+    _client = NewClient(_session_path())
+
+    @_client.event(MessageEv)
+    def _on_message(client, event):  # noqa: ANN001
+        try:
+            if getattr(event.Info.MessageSource, "IsFromMe", False):
+                return
+            text = _message_text(event)
+            if not text:
+                return
+            chat = event.Info.MessageSource.Chat
+            with _lock:
+                _subscribers[str(chat)] = chat
+            plea_room.submit(text, source="whatsapp")
+        except Exception as e:
+            print(f"[whatsapp] inbound error: {e}")
+
     plea_room.register_sink(_sink)
-    print("[whatsapp] Twilio sink registered; point the sandbox webhook at /whatsapp")
+
+    def _run():
+        print("[whatsapp] connecting — scan the QR below from WhatsApp > Linked Devices")
+        try:
+            _client.connect()  # blocks; prints the pairing QR on first run
+        except Exception as e:
+            print(f"[whatsapp] client stopped: {e}")
+
+    threading.Thread(target=_run, daemon=True, name="whatsapp-link").start()
     return True
+
+
+def _sink(text: str) -> None:
+    if _client is None:
+        return
+    with _lock:
+        targets = list(_subscribers.values())
+    for jid in targets:
+        try:
+            _client.send_message(jid, text[:1500])
+        except Exception as e:
+            print(f"[whatsapp] send failed: {e}")

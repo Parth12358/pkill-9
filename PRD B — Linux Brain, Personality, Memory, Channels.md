@@ -36,8 +36,9 @@ Enhancements added after the core build:
       alive and reacts on its own (model-generated freedom line); `/screen`
       flags `★ ESCAPED ★`.
 - [x] **Multi-channel** — web room (always on) + optional Discord bot
-      (`brain/discord_bot.py`) and WhatsApp via Twilio (`brain/whatsapp.py`),
-      behind a shared sink registry. Twitter stays with Person Mac (PRD A).
+      (`brain/discord_bot.py`) and WhatsApp by **linking your own phone** via QR
+      (`brain/whatsapp.py`, neonize — no Twilio/keys), behind a shared sink
+      registry. Twitter stays with Person Mac (PRD A).
 
 - [ ] Sync 2: connect to the real body over HTTP (point body at `:5000/think`).
 - [ ] Optional: set `DEEPSEEK_API_KEY` for lower turn latency; set

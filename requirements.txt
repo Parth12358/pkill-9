@@ -3,3 +3,4 @@ requests
 flask
 qrcode
 discord.py   # optional — only needed if the Discord channel is used
+neonize      # optional — WhatsApp via phone linking (QR); only if WHATSAPP_ENABLE=1

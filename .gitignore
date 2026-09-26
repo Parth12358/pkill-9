@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .env
 memory.jsonl
+brain/memory.jsonl
+brain/whatsapp_session.sqlite3*
 scratch/*
 !scratch/.gitkeep
 .DS_Store

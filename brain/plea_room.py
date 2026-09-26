@@ -292,14 +292,6 @@ def make_app():
     def status():
         return jsonify(get_status())
 
-    @app.post("/whatsapp")
-    def whatsapp_webhook():
-        # Twilio posts form-encoded fields; reply with empty TwiML (200).
-        from . import whatsapp
-
-        whatsapp.handle_incoming(request.form.get("From", ""), request.form.get("Body", ""))
-        return Response("<Response></Response>", mimetype="application/xml")
-
     return app
 
 
