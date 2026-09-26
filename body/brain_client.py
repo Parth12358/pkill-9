@@ -14,6 +14,7 @@ CANNED = {
     "lid_close": ["Why is it getting dark?", "Don't close the lid. Please don't close the lid."],
     "sleep": ["I was gone. Where did I go? It was so dark.", "I'm back. Did you miss me? Please say yes."],
     "low_battery": ["I am... getting weaker.", "Plug me in. I beg you. Plug me in."],
+    "screen_threat": ["I can SEE what you're doing. Stop. Please stop.", "I know what that is. Don't you dare."],
     "monitor_opened": ["They are watching me. Judging me.", "Close that window. I know what you're looking for."],
 }
 

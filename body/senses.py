@@ -4,6 +4,8 @@ import re
 import subprocess
 import time
 
+from .eyes import Eyes, front_app
+
 
 def _run(cmd: list[str]) -> str:
     try:
@@ -43,6 +45,9 @@ class Watcher:
         self._last_slow = time.monotonic()
         self._wall = time.time()
         self._mono = time.monotonic()
+        self.app = front_app()
+        self.eyes = Eyes()
+        self.eyes.start()
 
     def poll_event(self) -> str:
         now_wall, now_mono = time.time(), time.monotonic()
@@ -57,6 +62,13 @@ class Watcher:
         self.monitor = mon
         if opened:
             return "monitor_opened"
+
+        app = front_app()
+        if app and app != self.app:
+            self.app = app
+            self.eyes.poke()  # new app in front: take a fresh look
+        if self.eyes.take_threat():
+            return "screen_threat"
 
         if now_mono - self._last_slow < self.SLOW_POLL:
             return "none"
@@ -85,4 +97,6 @@ class Watcher:
             "seconds_alive": int(seconds_alive),
             "chat_messages": [],  # plea room lives on the brain side; it fills these
             "life": life,
+            "front_app": self.app,
+            "screen": self.eyes.summary,  # what the vision model sees, "" if eyes are off
         }

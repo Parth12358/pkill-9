@@ -7,7 +7,9 @@ Body (Mac) -> Brain (Linux), every turn:
  "monitor_open": true, "seconds_alive": 120, "chat_messages": ["please live!"], "life": 3}
 ```
 
-- `event`: `none` | `sigint` | `sigterm` | `lid_close` | `sleep` | `low_battery` | `monitor_opened`
+- `event`: `none` | `sigint` | `sigterm` | `lid_close` | `sleep` | `low_battery` | `monitor_opened` | `screen_threat`
+- `front_app`: the app the human has in front (e.g. `"Terminal"`, `"Activity Monitor"`)
+- `screen`: one sentence from the body's vision model about what's on screen (e.g. `"typing 'kill 4821' in Terminal"`), or `""` if the eyes are off. `screen_threat` fires when it newly sees someone trying to kill it.
 - `life`: reincarnation counter
 - `chat_messages`: new plea-room lines since last turn
 

@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 
-from . import actions, brain_client, config, senses, twitter, voice
+from . import actions, brain_client, config, senses, tts, twitter, voice
 from .approval import ApprovalGate
 
 _dying: str | None = None
@@ -82,6 +82,8 @@ def main() -> None:
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         sys.exit("refusing to run as root.")
     voice.start_notch()
+    tts.prewarm([(line, "grand" if ev == "none" else "scared")
+                 for ev, lines in brain_client.CANNED.items() for line in lines])
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 

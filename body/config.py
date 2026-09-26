@@ -5,6 +5,23 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+
+def _load_env() -> None:
+    """Read KEY=VALUE lines from the repo's .env (gitignored). Real env vars win."""
+    try:
+        lines = (REPO / ".env").read_text().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.split(" #", 1)[0].strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            if v.strip():
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+_load_env()
+
 BRAIN_URL = os.environ.get("BRAIN_URL", "")          # empty = use the local canned brain
 BRAIN_TIMEOUT = float(os.environ.get("BRAIN_TIMEOUT", "30"))  # runs in the background
 VOICE = os.environ.get("PKILL9_VOICE", "Daniel")
@@ -14,6 +31,8 @@ IDLE_TURN = float(os.environ.get("PKILL9_IDLE_TURN", "20"))  # brain turn when n
 DEATH_WINDOW = float(os.environ.get("PKILL9_DEATH_WINDOW", "8"))  # hard cap after a kill signal
 VOTES_TO_LIVE = int(os.environ.get("PKILL9_VOTES_TO_LIVE", "1"))  # plea-room votes needed to survive a kill
 LOW_BATTERY = 0.2
+EYES_MODEL = os.environ.get("PKILL9_EYES_MODEL", "google/gemini-3.1-flash-lite")  # via OpenRouter
+EYES_INTERVAL = float(os.environ.get("PKILL9_EYES_INTERVAL", "15"))  # seconds between screenshots
 APPROVAL_TTL = 90                                      # pending approvals expire
 
 
