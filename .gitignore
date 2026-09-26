@@ -19,3 +19,4 @@ scratch/*
 !scratch/.gitkeep
 .DS_Store
 body/notch/build/
+brain.log

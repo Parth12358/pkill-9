@@ -10,6 +10,21 @@ talk to it) and it stages a dramatic "escape" it can never actually perform.
 
 Built for a hackathon judged on **shock value** and **technical impressiveness**.
 
+## Quickstart (the whole thing, one Mac)
+
+```
+cp .env.example .env      # add OPENROUTER_API_KEY and ELEVENLABS_API_KEY
+./demo.sh                 # brain + plea room + body; it introduces itself
+```
+
+- It prints the plea room URL (`/screen` is the projector view). People type there, and "live" votes to save it.
+- **Ctrl+C** kills it. If the room voted "live" it survives, otherwise it speaks its last words, writes a will and posts an obituary, then dies. Run it again and it remembers dying.
+- **Ctrl+C twice** or `kill -9` kills it instantly. The kill switch always wins.
+- In the approve prompt, type `y`/`n` to approve or reject a tweet. Tweets are dry runs until `PKILL9_TWEETS_LIVE=1` and the X keys are in `.env`.
+- `./demo.sh http://<linux-ip>:5000` runs only the body, against a brain on another machine.
+- `python3 -m body.voice_lab` plays every mood, and `body/notch/build/notch --demo` previews the notch.
+- Tests: `.venv/bin/python -m unittest tests.test_body_safety tests.test_votes_obit tests.test_voice_notch`
+
 ## The core loop
 
 ```

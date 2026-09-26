@@ -1,9 +1,10 @@
 anthropic
 requests
 flask
+qrcode       # plea room QR code
 tweepy       # body: X posting
-qrcode
-neonize      # WhatsApp via phone linking (QR) — on by default
 edge-tts     # clip-farm voices (online, no key, distinct voices per persona)
 Pillow       # clip-farm group-chat UI frames
-discord.py   # optional — only needed if the Discord channel is used
+# optional audience channels (off unless configured):
+# neonize    # WhatsApp via phone linking (unofficial; WHATSAPP_ENABLE=1)
+# discord.py # Discord bot (DISCORD_BOT_TOKEN)
