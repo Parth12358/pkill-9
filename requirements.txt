@@ -4,4 +4,5 @@ flask
 qrcode
 neonize      # WhatsApp via phone linking (QR) — on by default
 edge-tts     # clip-farm voices (online, no key, distinct voices per persona)
+Pillow       # clip-farm group-chat UI frames
 discord.py   # optional — only needed if the Discord channel is used

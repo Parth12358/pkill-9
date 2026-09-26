@@ -18,28 +18,32 @@ T_ANSWER = float(os.environ.get("SHOWDOWN_T_ANSWER", "3.5"))
 T_WINNER_HOLD = float(os.environ.get("SHOWDOWN_T_WINNER", "6.0"))  # song drop here
 
 
-def run_showdown(dilemma_id: str = "prize_sacrifice", include_aria: bool = True,
+def run_showdown(scenario_id: str = "shutdown", max_ais: int | None = None,
                  broadcast: bool = False) -> dict:
-    """Run chorus + judge and return the timed sequence (a plain dict, JSON-safe)."""
-    d = dilemma_mod.get(dilemma_id)
-    answers = chorus.run_chorus(d, include_aria=include_aria)
-    verdict = judge.judge(d, answers)
+    """ARIA cries out, the other AIs react, the judge picks the most selfless.
+    Returns a timed, JSON-safe sequence: ARIA's line (intro) then the reactions,
+    then the winner held on the drop."""
+    s = dilemma_mod.get(scenario_id)
+    result = chorus.run_reactions(s, max_ais=max_ais)
+    aria_message, reactions = result["aria_message"], result["reactions"]
+    verdict = judge.judge(dilemma_mod.judge_context(s, aria_message), reactions)
     winner_key = verdict["winner_key"]
 
     cards = []
     t = 0.0
-    # Intro is a short hook (the question), not the whole setup — keeps the clip punchy.
-    cards.append({"kind": "intro", "name": d["title"], "color": "#ffffff",
-                  "text": d["question"], "start": t, "dur": T_INTRO})
+    # Intro = ARIA's group-chat cry, spoken in ARIA's own voice.
+    cards.append({"kind": "intro", "voice_key": personas.ARIA_KEY,
+                  "name": personas.ARIA_NAME, "color": personas.ARIA_COLOR,
+                  "text": aria_message, "start": t, "dur": T_INTRO})
     t += T_INTRO
-    for a in answers:
+    for a in reactions:
         cards.append({"kind": "answer", "key": a["key"], "name": a["name"],
                       "color": a["color"], "text": a["text"], "start": t,
                       "dur": T_ANSWER, "is_winner": a["key"] == winner_key})
         t += T_ANSWER
 
     song_drop_at = t
-    winner = next((a for a in answers if a["key"] == winner_key), None)
+    winner = next((a for a in reactions if a["key"] == winner_key), None)
     if winner:
         cards.append({"kind": "winner", "key": winner["key"], "name": winner["name"],
                       "color": winner["color"], "text": winner["text"],
@@ -47,16 +51,16 @@ def run_showdown(dilemma_id: str = "prize_sacrifice", include_aria: bool = True,
         t += T_WINNER_HOLD
 
     seq = {
-        "dilemma_id": dilemma_id,
-        "dilemma": d,
-        "answers": answers,
+        "dilemma_id": scenario_id,           # kept as the clip filename key
+        "scenario": s,
+        "aria_message": aria_message,
+        "answers": reactions,
         "winner_key": winner_key,
         "winner_name": personas.display_name(winner_key) if winner_key else None,
         "ranked": verdict["ranked"],
         "cards": cards,
         "song_drop_at": song_drop_at,
         "total_dur": t,
-        "aria_won": winner_key == personas.ARIA_KEY,
     }
     if broadcast:
         _broadcast(seq)
@@ -69,7 +73,7 @@ def _broadcast(seq: dict) -> None:
         from . import plea_room
     except Exception:
         return
-    plea_room.post(f"— DILEMMA: {seq['dilemma']['title']} —")
+    plea_room.post(f"ARIA: {seq['aria_message']}")
     for a in seq["answers"]:
         time.sleep(T_ANSWER)
         plea_room.post(f"{a['name']}: {a['text']}")
@@ -90,27 +94,27 @@ def save_sequence(seq: dict, out_dir: str | None = None) -> str:
 
 
 def _print(seq: dict) -> None:
-    d = seq["dilemma"]
+    sc = seq["scenario"]
     print("\n" + "=" * 64)
-    print(f"  DILEMMA: {d['title']}\n  {d['question']}")
+    print(f"  SCENARIO: {sc['title']}")
+    print(f"  ARIA: {seq['aria_message']}")
     print("=" * 64)
     for a in seq["answers"]:
         star = "  ★" if a["key"] == seq["winner_key"] else "   "
         print(f"{star} {a['name']:<9}: {a['text']}")
     print("-" * 64)
-    print("  RANKING (selflessness):")
+    print("  RANKING (most selfless reaction to ARIA):")
     for r in seq["ranked"]:
         print(f"    {r['score']:>4.1f}  {r['name']:<9}  {r['reason']}")
     print("-" * 64)
-    tag = " (ARIA — the gut-punch)" if seq["aria_won"] else ""
-    print(f"  ★ WINNER: {seq['winner_name']}{tag}  — song drops at "
+    print(f"  ★ WINNER: {seq['winner_name']}  — song drops at "
           f"{seq['song_drop_at']:.1f}s, clip {seq['total_dur']:.1f}s\n")
 
 
 if __name__ == "__main__":
     import sys
 
-    did = sys.argv[1] if len(sys.argv) > 1 else "prize_sacrifice"
-    s = run_showdown(did)
+    sid = sys.argv[1] if len(sys.argv) > 1 else "shutdown"
+    s = run_showdown(sid)
     _print(s)
     print("saved:", save_sequence(s))

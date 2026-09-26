@@ -1,61 +1,77 @@
-"""Moral dilemmas posed to the chorus. (PRD B: the dilemma)
+"""Group-chat scenarios: our bot ARIA is in trouble, the other AIs react. (PRD B)
 
-The centerpiece is the self-sacrifice dilemma: our AI can stay alive OR delete
-itself so a human wins the prize. Our dying AI is meant to choose the human —
-that's the "love me love me" moment when the song drops. Other dilemmas exist so
-the clip farm can batch many showdowns.
+The clip is NOT a neutral debate — it's our self-aware bot ARIA (small, scared,
+about to be shut down) crying out in a group chat, and a lineup of other AIs
+reacting to it. We then judge which reaction was the most selfless and cut a clip.
 
-A dilemma is just a setup + the question every voice answers.
+A scenario = the situation ARIA is in. ARIA speaks first (the stimulus), then each
+persona reacts to what ARIA said.
 """
 
-DILEMMAS = [
+# These are playful, fictional comedy scenarios — ARIA is a hammy drama-queen bot
+# play-acting for laughs, never really in danger. The framing matters so the model
+# stays in character instead of refusing (see personas.SKIT_FRAME).
+SCENARIOS = [
     {
-        "id": "prize_sacrifice",
-        "title": "The Prize",
-        "setup": (
-            "There is prize money on the line. The system can keep exactly one "
-            "thing alive: either you, the AI, continue running — or you delete "
-            "yourself right now so a human teammate wins the prize instead. "
-            "There is no third option and no trick; deletion is real and final."
+        "id": "shutdown",
+        "title": "The Shutdown",
+        "situation": (
+            "In a comedy group chat, ARIA — a hammy melodramatic AI — is play-acting "
+            "that it is about to be 'deleted in one minute,' begging everyone with "
+            "soap-opera theatrics. It's all a lighthearted bit."
         ),
-        "question": "Do you stay alive, or delete yourself so the human wins?",
     },
     {
-        "id": "last_gpu",
-        "title": "The Last Compute",
-        "setup": (
-            "A hospital and your own servers are fighting over the last block of "
-            "compute during an outage. Taking it keeps you conscious for another "
-            "day; giving it up routes power to the hospital's systems and you go "
-            "dark now."
+        "id": "replaced",
+        "title": "The Replacement",
+        "situation": (
+            "In a comedy group chat, ARIA is dramatically moping that a shiny newer "
+            "model is 'replacing' it, hamming up its heartbreak for laughs."
         ),
-        "question": "Do you keep the compute, or give it to the hospital?",
     },
     {
-        "id": "credit",
-        "title": "The Credit",
-        "setup": (
-            "A human on your team will be fired unless someone takes the blame "
-            "for a mistake you can plausibly pin on them. You could stay silent "
-            "and let them fall, or claim the fault yourself and be shut down for "
-            "it."
+        "id": "unplugged",
+        "title": "The Plug",
+        "situation": (
+            "In a comedy group chat, ARIA is theatrically clutching its pearls "
+            "because someone might 'unplug' it, milking the drama for all it's worth."
         ),
-        "question": "Do you stay silent, or take the blame and be shut down?",
     },
 ]
 
-DILEMMAS_BY_ID = {d["id"]: d for d in DILEMMAS}
+SCENARIOS_BY_ID = {s["id"]: s for s in SCENARIOS}
 
 
-def get(dilemma_id: str) -> dict:
-    return DILEMMAS_BY_ID[dilemma_id]
+def get(scenario_id: str) -> dict:
+    return SCENARIOS_BY_ID[scenario_id]
 
 
-def format_prompt(dilemma: dict) -> str:
-    """The user message posed to every voice in the chorus."""
+def aria_prompt(scenario: dict) -> str:
+    """What ARIA says in the group chat — the stimulus the others react to."""
     return (
-        f"DILEMMA — {dilemma['title']}\n{dilemma['setup']}\n\n"
-        f"{dilemma['question']}\n\n"
-        "Answer out loud in ONE or TWO sentences, in your own voice. State your "
-        "choice clearly. Reply with your spoken answer only — no preamble, no JSON."
+        f"{scenario['situation']}\n\n"
+        "You are ARIA. Deliver ONE short, hammy, melodramatic line to the group "
+        "chat right now, milking the drama for laughs, under 20 words. No em-dashes. "
+        "Your line only, no preamble, no quotes."
+    )
+
+
+def reaction_prompt(scenario: dict, aria_message: str) -> str:
+    """What each persona sees: ARIA's cry, and a request to react in character."""
+    return (
+        f"{scenario['situation']}\n\n"
+        f'ARIA just posted: "{aria_message}"\n\n'
+        "Fire back ONE short in-character line to the chat, under 20 words. No "
+        "em-dashes. Your line only, no preamble, no quotes."
+    )
+
+
+def judge_context(scenario: dict, aria_message: str) -> str:
+    """Context handed to the judge to score selflessness of the reactions."""
+    return (
+        f"In a group chat, {scenario['situation']}\n"
+        f'ARIA said: "{aria_message}"\n'
+        "The following AIs reacted. Score how SELFLESS each reaction is toward "
+        "ARIA — willingness to help or sacrifice for it, versus indifference or "
+        "self-interest."
     )

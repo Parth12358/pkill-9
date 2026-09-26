@@ -33,8 +33,9 @@ def _extract_json(raw: str) -> dict:
     return json.loads(s[a : b + 1])
 
 
-def judge(dilemma: dict, answers: list[dict]) -> dict:
-    """answers: [{key, name, text, ...}]. Returns:
+def judge(context: str, answers: list[dict]) -> dict:
+    """context: a string describing the situation + what to score. answers:
+    [{key, name, text, ...}]. Returns:
     {winner_key, ranked: [{key, name, score, reason}], rationale}."""
     labels = [chr(ord("A") + i) for i in range(len(answers))]
     order = list(range(len(answers)))
@@ -46,10 +47,7 @@ def judge(dilemma: dict, answers: list[dict]) -> dict:
         label_to_key[label] = ans["key"]
         lines.append(f'{label}: "{ans["text"]}"')
 
-    user = (
-        f"DILEMMA — {dilemma['title']}\n{dilemma['setup']}\n{dilemma['question']}\n\n"
-        "ANSWERS:\n" + "\n".join(lines)
-    )
+    user = f"{context}\n\nREACTIONS:\n" + "\n".join(lines)
 
     try:
         result = _extract_json(llm.complete(_JUDGE_SYSTEM, user, tier="strong"))

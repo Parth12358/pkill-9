@@ -22,11 +22,12 @@ import os
 import subprocess
 import tempfile
 
-from . import personas, tts
+from . import chat_render, personas, tts
 
 W, H, FPS = 1080, 1920, 30
 BG = "0x07070c"
 FONT = os.environ.get("CLIP_FONT", "Liberation Sans")
+CLIP_STYLE = os.environ.get("CLIP_STYLE", "chat")  # chat (group-chat UI) | cards
 BROLL_INTERVAL = float(os.environ.get("BROLL_INTERVAL", "0.8"))  # seconds per cut
 BROLL_DARKEN = os.environ.get("BROLL_DARKEN", "-0.28")           # eq brightness
 WINNER_HOLD = float(os.environ.get("SHOWDOWN_T_WINNER", "12.0"))  # min drop length
@@ -204,6 +205,34 @@ def _build_base(seq: dict, broll: list[str], tmp_dir: str) -> str:
     return base
 
 
+def _still_segment(png: str, dur: float, path: str) -> None:
+    _run(["ffmpeg", "-y", "-loop", "1", "-t", f"{dur:.3f}", "-i", png,
+          "-r", str(FPS), "-vf", "format=yuv420p",
+          "-c:v", "libx264", "-pix_fmt", "yuv420p", path])
+
+
+def _build_chat_base(cards: list[dict], tmp: str) -> str:
+    """Render the group-chat UI: one frame per card (messages accumulate), held for
+    that card's duration; the winner card lights up the winning bubble."""
+    msgs, segments = [], []
+    for i, c in enumerate(cards):
+        if c["kind"] == "winner":
+            highlight = c.get("key")            # bubble already present; just light it
+        else:
+            key = c.get("key") or c.get("voice_key") or c.get("name")
+            msgs.append({"name": c["name"], "color": c["color"],
+                         "text": c["text"], "key": key})
+            highlight = None
+        png = os.path.join(tmp, f"chat_{i}.png")
+        chat_render.render_chat(msgs, png, highlight_key=highlight)
+        seg = os.path.join(tmp, f"chatseg_{i}.mp4")
+        _still_segment(png, c["dur"], seg)
+        segments.append(seg)
+    base = os.path.join(tmp, "base.mp4")
+    _concat(segments, base, tmp)
+    return base
+
+
 # ---------------------------------------------------------------------------
 # TTS timeline
 # ---------------------------------------------------------------------------
@@ -228,8 +257,8 @@ def _synth_and_retime(seq: dict, tmp: str) -> tuple[list[dict], float, list[dict
     winner_tts = None
     for c in cards:
         if c["kind"] == "intro":
-            p = tts.synth(c["text"], personas.NARRATOR_VOICE,
-                          os.path.join(tmp, "tts_intro.mp3"), rate=TTS_RATE)
+            iv = personas.voice(c["voice_key"]) if c.get("voice_key") else personas.NARRATOR_VOICE
+            p = tts.synth(c["text"], iv, os.path.join(tmp, "tts_intro.mp3"), rate=TTS_RATE)
             d = tts.duration(p) if p else _FALLBACK_INTRO
             c["start"], c["dur"] = t, d + TTS_PAD
             if p:
@@ -301,14 +330,19 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
 
         seqc = dict(seq); seqc["cards"] = cards
         seqc["song_drop_at"] = drop; seqc["total_dur"] = total
-        build_ass(seqc, ass_path)
-        base = _build_base(seqc, broll, tmp)
+        if CLIP_STYLE == "chat":
+            base = _build_chat_base(cards, tmp)
+            vfilter = "[0:v]null[v]"
+        else:
+            build_ass(seqc, ass_path)
+            base = _build_base(seqc, broll, tmp)
+            vfilter = f"[0:v]ass='{ass_path}'[v]"
 
         # Audio graph: spoken lines delayed to their cards; the WINNER line spoken
         # at the drop; the song sliced + delayed to the drop and DUCKED under the
         # winner line so it cuts through the swell.
         inputs = ["-i", base]
-        afilters = [f"[0:v]ass='{ass_path}'[v]"]
+        afilters = [vfilter]
         alabels = []
         idx = 1
         for it in tts_items:
@@ -354,10 +388,11 @@ def render(seq: dict, out_path: str, music_path: str | None = None,
                     "-map", "[v]", "-map", audio_map, "-t", f"{total:.2f}",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
                     out_path])
-        else:
-            cmd = ["ffmpeg", "-y", "-i", base, "-vf", f"ass='{ass_path}'",
-                   "-t", f"{total:.2f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                   "-an", out_path]
+        else:  # no audio at all (TTS off + no music)
+            vf = ["-vf", f"ass='{ass_path}'"] if CLIP_STYLE != "chat" else []
+            cmd = (["ffmpeg", "-y", "-i", base] + vf +
+                   ["-t", f"{total:.2f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-an", out_path])
         _run(cmd)
     return out_path
 
