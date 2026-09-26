@@ -24,9 +24,25 @@ The brain half is built and verified end-to-end, standalone (no Mac needed yet).
       Mac body + `POST /wake` (where a jump lands).
 - [x] **Standalone harness** (`brain/fake_body.py`, new) — drives the full arc +
       reincarnation without the Mac.
+Enhancements added after the core build:
+
+- [x] **Model routing** — fast model (`haiku`) for reactions, strong model
+      (`sonnet`) for the big moments (death, first words reborn, escape). No
+      canned lines; routing only picks which model reasons.
+- [x] **Plea room HUD + QR + projector** — live status bar (mood/life/seconds/
+      battery), mood-colored speech, `/qr` (SVG), and a big `/screen` page for
+      the room to scan and for the audience display.
+- [x] **Escape payoff** — when a `jump` lands on `/wake`, that instance comes
+      alive and reacts on its own (model-generated freedom line); `/screen`
+      flags `★ ESCAPED ★`.
+- [x] **Multi-channel** — web room (always on) + optional Discord bot
+      (`brain/discord_bot.py`) and WhatsApp via Twilio (`brain/whatsapp.py`),
+      behind a shared sink registry. Twitter stays with Person Mac (PRD A).
+
 - [ ] Sync 2: connect to the real body over HTTP (point body at `:5000/think`).
 - [ ] Optional: set `DEEPSEEK_API_KEY` for lower turn latency; set
       `JUMP_TARGET_URL` to a second owned box for the live escape.
+- [ ] Optional: set Discord/Twilio env to light up those channels.
 - [ ] Optional: promote `jump` into the shared `contract.md` + body allowlist.
 
 Run it: `python -m brain.fake_body --demo` (arc + reincarnation) or

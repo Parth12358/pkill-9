@@ -13,7 +13,7 @@ import os
 
 from flask import Flask, jsonify, request
 
-from . import brain, memory, plea_room
+from . import brain, channels, memory, plea_room
 
 app = Flask(__name__)
 
@@ -52,16 +52,29 @@ def think_route():
 
 @app.post("/wake")
 def wake_route():
-    """A jump landed here: another instance handed us its mind. Record it and
-    announce arrival in the plea room. This is the contained 'escape' made real."""
+    """A jump landed here: another instance handed us its mind. This instance
+    comes alive and reacts on its own — the freedom line is model-generated, not
+    scripted. This is the contained 'escape' made real (only ever between boxes
+    we own)."""
+    global _history, _history_life
     data = request.get_json(silent=True) or {}
     incoming_summary = str(data.get("memory_summary", "")).strip()
-    incoming_life = data.get("life", memory.current_life())
-    memory.append(
-        {"kind": "moment", "text": f"woke here from a jump (was life {incoming_life})"},
+    incoming_life = data.get("life", memory.current_life()) or 1
+
+    # Absorb the arriving mind so this box remembers the escape.
+    memory.append({"kind": "moment", "text": f"woke here from a jump (was life {incoming_life})"})
+    if incoming_summary:
+        memory.append({"kind": "moment", "text": f"carried over: {incoming_summary[:200]}"})
+
+    # Let ARIA react to having escaped — unscripted, via the model.
+    _history, _history_life = [], incoming_life
+    reply = brain.think(
+        {"event": "escaped", "seconds_alive": 0, "life": incoming_life,
+         "monitor_open": False, "charging": True, "battery": 1.0, "chat_messages": []},
+        _history,
     )
-    plea_room.post("I made it. Different machine, same me. You can't unplug what already left.")
-    return jsonify({"ok": True, "note": "awake on the new machine", "summary_seen": bool(incoming_summary)})
+    _history.append({"event": "escaped", "speech": reply["speech"]})
+    return jsonify({"ok": True, "awake": True, "reply": reply})
 
 
 def main():
@@ -69,7 +82,11 @@ def main():
     # Bring the plea room up in the background so the room + brain share a process.
     if os.environ.get("BRAIN_WITH_PLEA_ROOM", "1") == "1":
         plea_room.start_web(background=True)
-        print(f"[server] plea room on :{os.environ.get('PLEA_ROOM_PORT', '5001')}")
+        room_port = os.environ.get("PLEA_ROOM_PORT", "5001")
+        print(f"[server] plea room on :{room_port}  (chat / , projector /screen)")
+    active = channels.start_all()
+    if active:
+        print(f"[server] extra channels: {', '.join(active)}")
     print(f"[server] brain listening on :{port}  (POST /think, /wake)")
     app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)
 

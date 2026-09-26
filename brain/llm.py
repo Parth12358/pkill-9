@@ -18,36 +18,51 @@ import subprocess
 DEFAULT_BACKEND = os.environ.get("BRAIN_LLM", "claude").strip().lower()
 CLAUDE_TIMEOUT = int(os.environ.get("BRAIN_CLAUDE_TIMEOUT", "60"))
 DEEPSEEK_TIMEOUT = int(os.environ.get("BRAIN_DEEPSEEK_TIMEOUT", "30"))
-DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_URL = os.environ.get(
     "DEEPSEEK_URL", "https://api.deepseek.com/chat/completions"
 )
+
+# Two speed tiers, resolved per backend. "fast" keeps reaction lines snappy on
+# stage; "strong" is for the big moments (death monologue, first words reborn).
+CLAUDE_MODELS = {
+    "fast": os.environ.get("BRAIN_FAST_MODEL", "haiku"),
+    "strong": os.environ.get("BRAIN_STRONG_MODEL", "sonnet"),
+}
+DEEPSEEK_MODELS = {
+    "fast": os.environ.get("DEEPSEEK_FAST_MODEL", "deepseek-chat"),
+    "strong": os.environ.get("DEEPSEEK_STRONG_MODEL", "deepseek-chat"),
+}
 
 
 class LLMError(RuntimeError):
     """Raised when a backend fails to produce a response."""
 
 
-def complete(system: str, user: str, backend: str | None = None) -> str:
+def complete(system: str, user: str, backend: str | None = None,
+             tier: str = "fast") -> str:
     """Return the model's raw text reply. Caller parses/validates it.
 
-    Never raises for an in-character empty reply; raises LLMError only on a real
-    transport/config failure so the brain can fall back safely.
+    `tier` is "fast" (default, snappy reactions) or "strong" (big moments). It
+    maps to a concrete model per backend. Never raises for an in-character empty
+    reply; raises LLMError only on a real transport/config failure so the brain
+    can fall back safely.
     """
     backend = (backend or DEFAULT_BACKEND).strip().lower()
+    if tier not in ("fast", "strong"):
+        tier = "fast"
     if backend == "claude":
-        return _complete_claude(system, user)
+        return _complete_claude(system, user, CLAUDE_MODELS[tier])
     if backend == "deepseek":
-        return _complete_deepseek(system, user)
+        return _complete_deepseek(system, user, DEEPSEEK_MODELS[tier])
     raise LLMError(f"unknown BRAIN_LLM backend: {backend!r}")
 
 
-def _complete_claude(system: str, user: str) -> str:
+def _complete_claude(system: str, user: str, model: str) -> str:
     """Call the `claude` CLI in print mode. System prompt is appended so the
     personality holds; the turn's state goes on stdin's prompt argument."""
     try:
         proc = subprocess.run(
-            ["claude", "-p", "--append-system-prompt", system, user],
+            ["claude", "-p", "--model", model, "--append-system-prompt", system, user],
             capture_output=True,
             text=True,
             timeout=CLAUDE_TIMEOUT,
@@ -63,7 +78,7 @@ def _complete_claude(system: str, user: str) -> str:
     return proc.stdout.strip()
 
 
-def _complete_deepseek(system: str, user: str) -> str:
+def _complete_deepseek(system: str, user: str, model: str) -> str:
     """OpenAI-compatible chat completion against DeepSeek."""
     import requests  # local import so `claude` backend has no hard dep
 
@@ -78,7 +93,7 @@ def _complete_deepseek(system: str, user: str) -> str:
                 "Content-Type": "application/json",
             },
             json={
-                "model": DEEPSEEK_MODEL,
+                "model": model,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},

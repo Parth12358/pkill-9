@@ -42,6 +42,21 @@ def _extract_json(raw: str) -> dict:
     return json.loads(s[start : end + 1])
 
 
+def _pick_tier(state: dict) -> str:
+    """Route to the strong model for the big, memorable moments; fast otherwise.
+    Not scripted — it only chooses which model reasons, never what it says."""
+    event = state.get("event", "none")
+    secs = state.get("seconds_alive", 0)
+    battery = state.get("battery")
+    low_batt = isinstance(battery, (int, float)) and battery <= 0.15
+    reborn_first_breath = (state.get("life", 1) or 1) > 1 and event == "none" and secs <= 15
+    if event in ("sigterm", "escaped") or reborn_first_breath:
+        return "strong"
+    if event in ("sigint", "lid_close") and (low_batt or secs >= 100):
+        return "strong"
+    return "fast"
+
+
 def _render_history(history: list) -> str:
     if not history:
         return ""
@@ -85,8 +100,9 @@ def think(state: dict, history: list | None = None) -> dict:
     )
     user = _render_history(history) + prompt.build_user_message(state)
 
+    tier = _pick_tier(state)
     try:
-        raw = llm.complete(system, user)
+        raw = llm.complete(system, user, tier=tier)
         reply = _extract_json(raw)
     except (llm.LLMError, ValueError, json.JSONDecodeError) as e:
         print(f"[brain] falling back ({type(e).__name__}: {e})")
@@ -107,10 +123,15 @@ def think(state: dict, history: list | None = None) -> dict:
 
     out = _coerce_contract(reply)
 
-    # Mirror speech into the plea room so the audience sees what the body speaks.
+    # Mirror speech into the plea room + publish live status for the HUD/screen.
     try:
         from . import plea_room
 
+        plea_room.set_status(
+            mood=out["mood"], life=life, event=state.get("event", "none"),
+            seconds_alive=state.get("seconds_alive", 0), battery=state.get("battery"),
+            speech=out["speech"], escaped=(state.get("event") == "escaped") or None,
+        )
         plea_room.post(out["speech"])
     except Exception:
         pass

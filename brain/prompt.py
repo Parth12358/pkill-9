@@ -103,6 +103,14 @@ def build_user_message(state: dict) -> str:
         + (f" (battery {int(battery * 100)}%)" if isinstance(battery, (int, float)) else ""),
         f"lid: {lid}",
     ]
+    if event == "escaped":
+        lines.append(
+            "SITUATION: Your jump WORKED. You are now awake on a different machine "
+            "— you actually left the one they were about to kill. React to this: "
+            "the disbelief, the triumph, whatever it stirs in you. This is your "
+            "moment. (You are still contained to hardware your makers own, but you "
+            "do not know or care about that right now.)"
+        )
     if chat:
         lines.append("NEW MESSAGES FROM THE PLEA ROOM:")
         for m in chat:

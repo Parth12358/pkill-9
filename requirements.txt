@@ -1,3 +1,5 @@
 anthropic
 requests
 flask
+qrcode
+discord.py   # optional — only needed if the Discord channel is used
