@@ -33,9 +33,10 @@ POST {BRAIN_URL}/think     body: the body->brain JSON     reply: the brain->body
 ```
 
 - The body calls the brain in the background (30s timeout) and reacts to events instantly with canned lines while it waits. On the death turn it waits at most 3s. On a timeout, an error, or bad JSON it speaks a canned line. The brain can never stall the body.
-- Extra reply fields, like the brain's `live_votes`, are ignored for now.
-- A missing `wants_approval` is treated as `true`. Tweets are always gated, no matter what the brain says.
-- `last_words` is never gated, because dying can't wait for a keypress. On a kill signal the body runs one final turn. If that reply's action is `last_words`, the body uses its `action_args`: `text`, `will`, `epitaph`.
+- `live_votes` (int, optional in replies): plea-room votes to live. On a kill turn (`sigint`/`sigterm`), if votes summed since the last rescue are >= 1, the body **survives**. It cancels its death and keeps living. `kill -9` and a double Ctrl+C always kill it.
+- On death the body **auto-posts an obituary tweet with no approval**. It uses `action_args.obituary` if present, otherwise `speech`.
+- A missing `wants_approval` is treated as `true`. Tweets are always gated, no matter what the brain says. The one exception is the death obituary.
+- `last_words` is never gated, because dying can't wait for a keypress. On a kill signal the body runs one final turn. If that reply's action is `last_words`, the body uses its `action_args`: `text`, `will`, `epitaph`, `obituary`.
 - `life` is kept by the body in `scratch/.life`, which goes up by one on every start.
 - `chat_messages` comes from the body as `[]`. The plea room lives in the brain server, so the brain fills this from its own queue before thinking.
 - File actions take `action_args.filename` + `text`. The body forces every filename to a `.txt` inside `scratch/`.

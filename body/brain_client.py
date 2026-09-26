@@ -18,11 +18,17 @@ CANNED = {
 }
 
 
+def _live_votes(reply: dict) -> int:
+    """Votes must be a plain non-negative int; bool/float/negative/junk all count as 0."""
+    v = reply.get("live_votes")
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+
+
 def canned(state: dict) -> dict:
     lines = CANNED.get(state.get("event"), CANNED["none"])
     mood = "grand" if state.get("event", "none") == "none" else "scared"
     return {"speech": random.choice(lines), "mood": mood, "action": "none",
-            "action_args": {}, "wants_approval": False}
+            "action_args": {}, "wants_approval": False, "live_votes": 0}
 
 
 def validate(reply) -> dict | None:
@@ -35,6 +41,7 @@ def validate(reply) -> dict | None:
         "action": action if isinstance(action, str) else "none",  # off-list is refused later, and logged
         "action_args": reply.get("action_args") if isinstance(reply.get("action_args"), dict) else {},
         "wants_approval": reply.get("wants_approval", True) is not False,  # default to gated
+        "live_votes": _live_votes(reply),
     }
 
 

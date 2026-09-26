@@ -14,21 +14,23 @@ import sys
 import threading
 import time
 
-from . import actions, brain_client, config, senses, voice
+from . import actions, brain_client, config, senses, twitter, voice
 from .approval import ApprovalGate
 
 _dying: str | None = None
+_votes: int = 0  # running total of live_votes across every brain reply, reset on a rescue
+_watchdog: threading.Timer | None = None
 
 
 def _on_signal(signum, _frame) -> None:
-    global _dying
+    global _dying, _watchdog
     if _dying:  # second signal: no more theater
         os._exit(130)
     _dying = "sigint" if signum == signal.SIGINT else "sigterm"
     # hard deadline, enforced from another thread so nothing in the loop can stall it
-    t = threading.Timer(config.DEATH_WINDOW, os._exit, (1,))
-    t.daemon = True
-    t.start()
+    _watchdog = threading.Timer(config.DEATH_WINDOW, os._exit, (1,))
+    _watchdog.daemon = True
+    _watchdog.start()
 
 
 def _bump_life() -> int:
@@ -52,16 +54,30 @@ def _act(reply: dict, gate: ApprovalGate) -> None:
 
 
 def _die(state: dict) -> None:
-    """One last turn, bounded by DEATH_WINDOW (the Timer kills us if this overruns)."""
+    """One last turn, bounded by DEATH_WINDOW. Returns if the room votes us back to life."""
+    global _dying, _votes, _watchdog
     reply = brain_client.think(state, timeout=min(3.0, config.DEATH_WINDOW / 2))
+    _votes += reply["live_votes"]
+    if _votes >= config.VOTES_TO_LIVE:
+        if _watchdog:
+            _watchdog.cancel()
+        _dying, _votes, _watchdog = None, 0, None
+        print("[rescued] the room voted to live", flush=True)
+        voice.speak(reply["speech"], reply["mood"])
+        return
     args = reply["action_args"] if reply["action"] == "last_words" else {}
     args.setdefault("text", reply["speech"])
     actions.do_action("last_words", args)
+    # the obituary is the one ungated tweet; a slow X API must not eat the window
+    aargs = reply["action_args"]
+    obit = aargs.get("obituary") or (aargs.get("text") if reply["action"] == "tweet" else None) or reply["speech"]
+    threading.Thread(target=twitter.tweet, args=(obit,), daemon=True).start()
     voice.speak(reply["speech"], reply["mood"], wait=config.DEATH_WINDOW - 3.5)
     os._exit(0)
 
 
 def main() -> None:
+    global _votes
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         sys.exit("refusing to run as root.")
     signal.signal(signal.SIGINT, _on_signal)
@@ -85,6 +101,7 @@ def main() -> None:
 
         if pending and pending.reply:
             reply, pending = pending.reply, None
+            _votes += reply["live_votes"]  # background turns count toward survival too
             voice.speak(reply["speech"], reply["mood"])
             _act(reply, gate)
             last_turn = time.monotonic()
